@@ -7,7 +7,7 @@
 .app>.dock-split,.workspace>.timeline-split,.timeline>.track-split{position:absolute}
 @media(max-width:1050px){.app>.workspace{grid-row:2;grid-column:2}.app>.inspector{grid-row:auto;grid-column:auto}}
 @media(max-width:700px){.app>.library{grid-row:auto;grid-column:auto}.app>.workspace{grid-row:2;grid-column:1}}
-</style><link rel="stylesheet" href="./studio-v162.css?v=162"/></head><body><div id="app"></div><script src="./vendor/pixi.js"></script><script src="./vendor/pako.min.js"></script><script src="./vendor/howler.js"></script><script>
+</style><link rel="stylesheet" href="./studio-v162.css?v=162"/><link rel="stylesheet" href="./studio-v163.css?v=163"/></head><body><div id="app"></div><script src="./vendor/pixi.js"></script><script src="./vendor/pako.min.js"></script><script src="./vendor/howler.js"></script><script>
 const te = new TextEncoder(), td = new TextDecoder('utf-8', { fatal: true });
 class Reader {
     buf;
@@ -333,7 +333,7 @@ const tabTitles = { monsters: 'Animations', fx: 'VFX / Effects', looks: 'Looks',
 const root = $('#app');
 root.innerHTML = `<div class="app"><header class="top"><div class="mark"><div class="logo">M</div><div class="brand">Transformice <span style="color:#8fd9ca">Data Editor</span><small>ANIMATION · VFX · LOOKS · SFX</small></div></div><div class="bar"><button class="btn quiet mobiletab" data-action="toggleLibrary">${ico('list')}</button><button class="btn small quiet" data-action="loadGame" title="Load the current data.bin from the official game server">Game BIN</button><button class="btn" data-action="open">${ico('folder')}<span class="hide-tight"> Open BIN</span></button><button class="btn quiet hide-tablet" data-action="folder">${ico('image')} Local assets</button><button class="btn quiet hide-tablet" data-action="url">${ico('upload')} URL</button><button class="btn quiet hide-tablet" data-action="projectExport">${ico('code')} JSON</button></div><div class="bar push"><button class="btn icon quiet" data-action="undo" title="Undo Ctrl+Z">${ico('undo')}</button><button class="btn icon quiet" data-action="redo" title="Redo Ctrl+Y">${ico('redo')}</button><div class="separator hide-tablet"></div><span class="status" id="status">Loading...</span><button class="btn small quiet hidden" id="issueCount" data-action="issues" aria-label="Open diagnostics">Issues 0</button><button class="btn primary" data-action="save">${ico('download')} <span class="hide-tight">Export</span> data.bin</button><button class="btn quiet mobiletab" data-action="toggleInspector">${ico('settings')}</button></div></header>
 <aside class="sidebar library" id="library"><div class="sidehead"><div><div class="eyebrow">ASSET EXPLORER</div><h2 class="heading">Library</h2></div><button class="btn icon quiet" data-action="newEntry" title="Add entry">${ico('plus')}</button></div><div class="tabbar" id="tabs"></div><div class="searchwrap"><input class="search" id="search" placeholder="Search name, ID or part…" autocomplete="off"/></div><div class="list" id="libraryList"></div><div class="sidebarfoot" id="libraryFoot"></div></aside>
-<div class="dock-split library-split" data-resize="library" role="separator" aria-label="Resize library panel" aria-orientation="vertical" title="Drag to resize library"></div><main class="workspace"><div class="worktop"><div class="docname" id="docname">No animation selected</div><div class="workactions"><button class="btn small quiet" data-action="symbolBack" id="symbolBack" title="Back to previous symbol" style="display:none">← Symbol</button><button class="btn small quiet" data-action="copyAnim">${ico('copy')} <span class="hide-tight">Duplicate</span></button><button class="btn small quiet" data-action="importAnim">${ico('upload')} <span class="hide-tight">Import</span></button><button class="btn small quiet" data-action="exportAnim">${ico('download')} <span class="hide-tight">Animation</span></button></div></div><div class="viewport" id="viewport"><div class="canvas-toolbar"><button class="selected" data-action="modeMove" id="modeMove">${ico('move')} Move</button><button data-action="modePivot" id="modePivot">${ico('crosshair')} Pivot</button><button data-action="grid">${ico('grid')} Grid</button><button data-action="flip">${ico('flip')} Flip</button><button data-action="onion">${ico('layers')} Onion</button><button data-action="fit" title="Fit to view">${ico('crosshair')}</button></div><div class="canvas-help" id="canvasHelp">Select a layer · Drag to move or adjust its pivot · Scroll to zoom</div><div class="skin-switch"><label for="previewSkin">Preview look</label><select id="previewSkin" class="select-mini"></select><span class="skin-signal" id="skinSignal" title="Selected part status"></span></div><div class="zoom-controls" role="group" aria-label="Preview zoom"><button type="button" class="zoom-native" data-action="zoom100" title="Actual game scale: 1 game pixel = 1 CSS pixel">100%</button><input type="range" class="zoom-range" id="zoomRange" min="25" max="800" step="5" value="200" aria-label="Preview zoom percentage"/><output class="zoom-badge" id="zoomLabel" for="zoomRange">200%</output></div><div class="dropalert hidden" id="droplabel">Drop a .bin / .json / .png file</div></div><div class="playbar" role="toolbar" aria-label="Playback controls"><span class="player-group"><button class="btn icon quiet" data-action="first" title="First frame" aria-label="First frame">${ico('back')}</button><button class="btn icon quiet" data-action="prev" title="Previous frame (←)" aria-label="Previous frame">${ico('back')}</button><button class="btn icon" data-action="play" id="playbtn" title="Play (Space)" aria-label="Play" aria-pressed="false">${ico('play')}</button><button class="btn icon quiet" data-action="next" title="Next frame (→)" aria-label="Next frame">${ico('skip')}</button><button class="btn icon quiet" data-action="last" title="Last frame" aria-label="Last frame">${ico('skip')}</button></span><span class="counter" id="frameinfo" aria-live="off"><strong>0</strong> / 0</span><label class="preview-loop" title="Loop preview; does not change data.bin"><input id="previewLoop" type="checkbox" checked/> Loop</label><div class="separator"></div><span class="muted">Speed</span><select class="select-mini" id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select><div class="grow"></div><span class="fps-control" title="Fixed game animation timebase. The BIN does not store an FPS setting.">60 FPS</span></div><section class="timeline"><div class="dock-split track-split" data-resize="track" role="separator" aria-label="Resize layer names" aria-orientation="vertical" title="Drag to resize layer names"></div><div class="timelinehead"><span class="eyebrow">TIMELINE <span id="layerCount"></span></span><select id="symbols" class="select-mini" style="max-width:150px"></select><div class="separator"></div><button class="btn small quiet" data-action="keyAdd" title="K: add keyframe">${ico('diamond')} Key</button><button class="btn small quiet" data-action="keyDel" title="Del: remove keyframe">${ico('minus')}</button><button class="btn small quiet" data-action="layerAdd">${ico('plus')} Layer</button><button class="btn small primary part-wizard-btn" data-action="partWizard">${ico('plus')} New part #</button><button class="btn small quiet" data-action="layerUp" title="Move layer up">↑</button><button class="btn small quiet" data-action="layerDown" title="Move layer down">↓</button><div class="grow"></div><button class="btn small quiet hide-tablet" data-action="frameAdd">+ Frame</button><button class="btn small quiet hide-tablet" data-action="frameDel">− Frame</button></div><div class="timelinebody" id="timeline"></div><div class="timelinefoot" id="timelineFoot">Select a symbol to inspect its layers.</div></section><div class="dock-split timeline-split" data-resize="timeline" role="separator" aria-label="Resize timeline height" aria-orientation="horizontal" title="Drag to resize timeline"></div></main>
+<div class="dock-split library-split" data-resize="library" role="separator" aria-label="Resize library panel" aria-orientation="vertical" title="Drag to resize library"></div><main class="workspace"><div class="worktop"><div class="docname" id="docname">No animation selected</div><div class="workactions"><button class="btn small quiet" data-action="symbolBack" id="symbolBack" title="Back to previous symbol" style="display:none">← Symbol</button><button class="btn small quiet" data-action="copyAnim">${ico('copy')} <span class="hide-tight">Duplicate</span></button><button class="btn small quiet" data-action="importAnim">${ico('upload')} <span class="hide-tight">Import</span></button><button class="btn small quiet" data-action="exportAnim">${ico('download')} <span class="hide-tight">Animation</span></button></div></div><div class="viewport" id="viewport"><div class="canvas-toolbar"><button class="selected" data-action="modeMove" id="modeMove">${ico('move')} Move</button><button data-action="modePivot" id="modePivot">${ico('crosshair')} Pivot</button><button data-action="grid">${ico('grid')} Grid</button><button data-action="flip">${ico('flip')} Flip</button><button data-action="onion">${ico('layers')} Onion</button><button data-action="fit" title="Fit to view">${ico('crosshair')}</button></div><div class="canvas-help" id="canvasHelp">Select a layer · Drag to move or adjust its pivot · Scroll to zoom</div><div class="skin-switch"><label for="previewSkin">Preview look</label><select id="previewSkin" class="select-mini"></select><span class="skin-signal" id="skinSignal" title="Selected part status"></span></div><div class="zoom-controls" role="group" aria-label="Preview zoom"><button type="button" class="zoom-native" data-action="zoom100" title="Actual game scale: 1 game pixel = 1 CSS pixel">100%</button><input type="range" class="zoom-range" id="zoomRange" min="25" max="800" step="5" value="200" aria-label="Preview zoom percentage"/><output class="zoom-badge" id="zoomLabel" for="zoomRange">200%</output></div><div class="dropalert hidden" id="droplabel">Drop a .bin / .json / .png file</div></div><div class="playbar" role="toolbar" aria-label="Playback controls"><span class="player-group"><button class="btn icon quiet" data-action="first" title="First frame" aria-label="First frame">${ico('back')}</button><button class="btn icon quiet" data-action="prev" title="Previous frame (←)" aria-label="Previous frame">${ico('back')}</button><button class="btn icon" data-action="play" id="playbtn" title="Play (Space)" aria-label="Play" aria-pressed="false">${ico('play')}</button><button class="btn icon quiet" data-action="next" title="Next frame (→)" aria-label="Next frame">${ico('skip')}</button><button class="btn icon quiet" data-action="last" title="Last frame" aria-label="Last frame">${ico('skip')}</button></span><span class="counter" id="frameinfo" aria-live="off"><strong>0</strong> / 0</span><label class="preview-loop" title="Loop preview; does not change data.bin"><input id="previewLoop" type="checkbox" checked/> Loop</label><div class="separator"></div><span class="muted">Speed</span><select class="select-mini" id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select><div class="grow"></div><span class="muted" id="previewFps" title="Measured preview redraw rate (not the game's fixed timebase)" style="font-size:11px;white-space:nowrap">Preview —</span><span class="fps-control" title="Fixed game animation timebase. The BIN does not store an FPS setting.">60 FPS</span></div><section class="timeline"><div class="dock-split track-split" data-resize="track" role="separator" aria-label="Resize layer names" aria-orientation="vertical" title="Drag to resize layer names"></div><div class="timelinehead"><span class="eyebrow">TIMELINE <span id="layerCount"></span></span><select id="symbols" class="select-mini" style="max-width:150px"></select><div class="separator"></div><button class="btn small quiet" data-action="keyAdd" title="K: add keyframe">${ico('diamond')} Key</button><button class="btn small quiet" data-action="keyDel" title="Del: remove keyframe">${ico('minus')}</button><button class="btn small quiet" data-action="layerAdd">${ico('plus')} Layer</button><button class="btn small primary part-wizard-btn" data-action="partWizard">${ico('plus')} New part #</button><button class="btn small quiet" data-action="layerUp" title="Move layer up">↑</button><button class="btn small quiet" data-action="layerDown" title="Move layer down">↓</button><div class="grow"></div><div class="timeline-view-tools" role="group" aria-label="Timeline navigation"><label class="frame-jump">Frame <input id="timelineFrameInput" type="number" min="0" step="1" value="0" aria-label="Jump to frame" title="Enter a frame to jump to it"/></label><span class="timeline-separator"></span><button class="tl-zoom-btn" data-action="timelineZoomOut" type="button" aria-label="Zoom out timeline" title="Zoom out timeline">−</button><input id="timelineZoom" class="tl-zoom" type="range" min="12" max="40" step="2" value="24" aria-label="Timeline zoom (frame width)" title="Frame width"/><button class="tl-zoom-btn" data-action="timelineZoomIn" type="button" aria-label="Zoom in timeline" title="Zoom in timeline">+</button><button class="tl-fit" type="button" data-action="timelineFit" title="Fit all frames in the timeline">Fit</button></div><button class="btn small quiet hide-tablet" data-action="frameAdd">+ Frame</button><button class="btn small quiet hide-tablet" data-action="frameDel">− Frame</button></div><div class="timelinebody" id="timeline"></div><div class="timelinefoot" id="timelineFoot">Select a symbol to inspect its layers.</div></section><div class="dock-split timeline-split" data-resize="timeline" role="separator" aria-label="Resize timeline height" aria-orientation="horizontal" title="Drag to resize timeline"></div></main>
 <div class="dock-split inspector-split" data-resize="inspector" role="separator" aria-label="Resize inspector panel" aria-orientation="vertical" title="Drag to resize inspector"></div><aside class="sidebar inspector" id="inspector"><div class="sidehead"><div><div class="eyebrow">PROPERTIES</div><h2 class="heading">Inspector</h2></div><button class="btn icon quiet" data-action="help">${ico('help')}</button></div><div class="inspect-scroll" id="inspectContent"></div></aside></div><input type="file" id="fileBin" accept=".bin,.json" hidden/><input type="file" id="fileAnim" accept=".json" hidden/><input type="file" id="filePng" accept=".png,image/png" hidden/><input type="file" id="fileSound" accept=".mp3,audio/mpeg" hidden/><div class="overlay hidden" id="modal"></div><div class="notice hidden" id="notice"></div>`;
 const lookGroupOrder = ['Fur', 'Hat', 'Face', 'Ears', 'Mouth', 'Tail', 'Shoulders', 'Clothing', 'Right hand', 'Left hand', 'Shield', 'Accessories', 'Effects', 'Other'];
 const openLookGroups = new Set(['Fur', 'Hat']);
@@ -375,7 +375,7 @@ let symbolTrail = [];
 let currentItemID = 2;
 let currentItemPath = '';
 let canvasApp, stage, gridLayer, ghostLayer, contentLayer, handleLayer;
-let lastFrame = performance.now(), elapsed = 0, renderRequested = true, drag = null;
+let lastFrame = performance.now(), elapsed = 0, renderRequested = true, sceneDirty = true, drag = null;
 let sound = null, toastTimeout = 0, saveTimeout = 0, localDB = null;
 const issueHistory = [];
 function issueMessage(e) { return e instanceof Error ? e.message : String(e ?? 'Unknown failure'); }
@@ -467,6 +467,7 @@ function mutate(fn, opts = {}) {
             throw Error(problems[0]);
         encodeBin(st.data);
         st.dirty = true;
+        sceneDirty = true;
         if (opts.structural)
             refresh();
         else {
@@ -499,7 +500,7 @@ function restore(dir) { if (!st.data)
     notify('Nothing to ' + (dir === 'undo' ? 'undo' : 'redo'));
     return;
 } to.push(encodeBin(st.data)); st.data = parseBin(v); st.dirty = true; refresh(); saveDraft(); }
-function refresh() { renderTabs(); renderLibrary(); renderHead(); renderTimeline(); renderInspector(); renderSkinPicker(); renderRequested = true; }
+function refresh() { sceneDirty = true; renderTabs(); renderLibrary(); renderHead(); renderTimeline(); renderInspector(); renderSkinPicker(); renderRequested = true; }
 function renderTabs() { $('#tabs').innerHTML = tabs.map(([t, i]) => `<button class="${st.tab === t ? 'active' : ''}" data-tab="${t}">${ico(i)}<span>${t === 'monsters' ? 'Anim' : t === 'fx' ? 'VFX' : t === 'looks' ? 'Looks' : t === 'items' ? 'Items' : t === 'sounds' ? 'SFX' : 'IDs'}</span></button>`).join(''); }
 function syncZoomControls() { const pct = Math.round(st.zoom * 100); const out = $('#zoomLabel'); if (out)
     out.textContent = `${pct}%`; const slider = $('#zoomRange'); if (slider)
@@ -606,29 +607,98 @@ function renderLibrary() {
     $('#libraryList').innerHTML = html || '<p class="muted" style="padding:20px">No results.</p>';
     $('#libraryFoot').innerHTML = `<button class="btn small" data-action="newEntry">${ico('plus')} New ${st.tab === 'monsters' ? 'asset' : st.tab === 'fx' ? 'effect' : st.tab === 'looks' ? 'look' : st.tab === 'items' ? 'item' : st.tab === 'sounds' ? 'sound' : 'ID'}</button><button class="btn small quiet" data-action="deleteEntry">${ico('trash')} Delete</button>`;
 }
+// Playback controls are independent from the timeline DOM: never tear down a drag target during playback.
+const TIMELINE_ZOOM_MIN = 12, TIMELINE_ZOOM_MAX = 40;
+let timelineCellWidth = 24;
+let timelineScrubbing = null;
+let scrubMoved = false, scrubStartFrame = 0;
+try {
+    const saved = Number(localStorage.getItem('tde-timeline-zoom'));
+    if (Number.isFinite(saved) && saved >= TIMELINE_ZOOM_MIN && saved <= TIMELINE_ZOOM_MAX)
+        timelineCellWidth = saved;
+}
+catch { }
+const timelineBody = () => $('#timeline');
+function timelineZoom(next) {
+    const pixels = clamp(Math.round(next / 2) * 2, TIMELINE_ZOOM_MIN, TIMELINE_ZOOM_MAX);
+    if (pixels === timelineCellWidth)
+        return;
+    const body = timelineBody(), current = body.scrollLeft;
+    // The leftmost visible frame remains in place while the user changes frame density.
+    const firstVisible = Math.max(0, current / timelineCellWidth);
+    timelineCellWidth = pixels;
+    body.closest('.timeline')?.style.setProperty('--tl-frame-px', `${pixels}px`);
+    const slider = $('#timelineZoom');
+    if (slider)
+        slider.value = String(pixels);
+    renderTimeline();
+    body.scrollLeft = Math.round(firstVisible * pixels);
+    updatePlaybackFrame();
+    try {
+        localStorage.setItem('tde-timeline-zoom', String(pixels));
+    }
+    catch { }
+}
+function timelineFit() {
+    const usable = timelineBody().clientWidth - (parseFloat(getComputedStyle($('.app')).getPropertyValue('--track-width')) || 185) - 8;
+    timelineZoom(clamp(Math.floor(usable / Math.max(1, frameCount())), TIMELINE_ZOOM_MIN, TIMELINE_ZOOM_MAX));
+    timelineBody().scrollLeft = 0;
+}
 let playbackTicks = new Map();
 let displayedFrame = -1;
+let activeKeyElement = null;
+const playbackKeys = new Map();
 function updatePlaybackFrame() {
     if (displayedFrame !== st.frame) {
-        for (const el of playbackTicks.get(displayedFrame) ?? [])
-            el.classList.remove('playhead');
-        for (const el of playbackTicks.get(st.frame) ?? [])
-            el.classList.add('playhead');
+        // The continuous playhead is a single overlay. Avoid touching every track cell
+        // on each playback frame (expensive style invalidations with 100+ layers).
+        if (!st.playing) {
+            for (const el of playbackTicks.get(displayedFrame) ?? [])
+                el.classList.remove('playhead');
+            for (const el of playbackTicks.get(st.frame) ?? [])
+                el.classList.add('playhead');
+        }
         displayedFrame = st.frame;
     }
-    const label = $('#frameinfo');
-    if (label)
-        label.innerHTML = `<strong>${st.frame}</strong> / ${Math.max(0, frameCount() - 1)}`;
-    // Preserve the selected keyframe highlight without rebuilding timeline or replacing interactive DOM.
-    const root = $('#timeline');
-    const previous = root.querySelector('.key.selected');
-    previous?.classList.remove('selected');
-    const active = root.querySelector(`[data-layerframe="${st.selected.layer}:${st.frame}"] .key`);
-    active?.classList.add('selected');
+    const line = $('#timelinePlayhead');
+    if (line) {
+        line.style.left = `calc(var(--track-width) + ${(st.frame + .5) * timelineCellWidth}px)`;
+        line.dataset.frame = String(st.frame);
+    }
+    const value = $('#frameinfo strong');
+    if (value && value.textContent !== String(st.frame))
+        value.textContent = String(st.frame);
+    const jump = $('#timelineFrameInput');
+    if (jump && document.activeElement !== jump) {
+        jump.value = String(st.frame);
+        jump.max = String(Math.max(0, frameCount() - 1));
+    }
+    // Preserve the selected keyframe highlight without rebuilding the timeline.
+    const active = playbackKeys.get(`${st.selected.layer}:${st.frame}`) || null;
+    if (active !== activeKeyElement) {
+        activeKeyElement?.classList.remove('selected');
+        active?.classList.add('selected');
+        activeKeyElement = active;
+    }
+    // Follow the playback marker without repeatedly rebuilding the interactive timeline.
+    if (st.playing)
+        timelineRevealFrame();
+}
+function timelineRevealFrame() {
+    const body = timelineBody(), cellLeft = st.frame * timelineCellWidth;
+    const trackWidth = parseFloat(getComputedStyle($('.app')).getPropertyValue('--track-width')) || 185;
+    const gridViewport = Math.max(10, body.clientWidth - trackWidth);
+    if (cellLeft < body.scrollLeft || cellLeft > body.scrollLeft + gridViewport - timelineCellWidth) {
+        body.scrollLeft = Math.max(0, cellLeft - gridViewport * .35);
+    }
 }
 function indexTimeline() {
     playbackTicks = new Map();
+    playbackKeys.clear();
+    activeKeyElement = null;
     const body = $('#timeline');
+    body.querySelectorAll('.key').forEach(el => { const cell = el.closest('[data-layerframe]'); if (cell)
+        playbackKeys.set(cell.dataset.layerframe, el); });
     body.querySelectorAll('.tick').forEach(el => {
         const frame = el.dataset.frame === undefined ? Number(el.dataset.layerframe?.split(':')[1]) : -1;
         if (!Number.isInteger(frame) || frame < 0)
@@ -637,7 +707,7 @@ function indexTimeline() {
         list.push(el);
         playbackTicks.set(frame, list);
     });
-    displayedFrame = st.frame;
+    displayedFrame = -1;
     updatePlaybackFrame();
 }
 function setPlaying(playing) {
@@ -645,23 +715,64 @@ function setPlaying(playing) {
     st.playing = playing && active;
     if (st.playing && st.frame >= frameCount() - 1 && !st.loop)
         st.frame = 0;
+    if (st.playing) {
+        for (const el of playbackTicks.get(displayedFrame) ?? [])
+            el.classList.remove('playhead');
+        displayedFrame = -1;
+    }
     elapsed = 0;
     lastFrame = performance.now();
+    if (!st.playing)
+        renderSlotSignal();
     renderHead();
     updatePlaybackFrame();
     renderRequested = true;
 }
-function seek(frame) { setPlaying(false); st.frame = clamp(Math.trunc(frame), 0, frameCount() - 1); renderTimeline(); renderInspector(); renderHead(); renderRequested = true; }
-function renderTimeline() { const c = activeClip(); if (!c) {
-    $('#timeline').innerHTML = '<div class="timeline-empty">Select an animation to view and edit keyframes.</div>';
-    $('#symbols').innerHTML = '';
-    return;
-} const sym = symbol(); $('#symbols').innerHTML = c.symbols.map((s, i) => `<option value="${i}" ${st.selected.symbol === i ? 'selected' : ''}>${s.main ? '★ ' : ''}${esc(s.name)} · ${s.children.length} layers / ${s.frames}f</option>`).join(''); if (!sym) {
-    $('#timeline').innerHTML = '<div class="timeline-empty">No symbol found. Create a symbol in the inspector.</div>';
-    return;
-} const max = Math.max(1, Math.min(500, sym.frames)); const count = $('#layerCount'); if (count)
-    count.textContent = `· ${sym.children.length} layers`; const foot = $('#timelineFoot'); if (foot)
-    foot.textContent = `${esc(sym.name)} · ${sym.children.length} layers · ${sym.frames} frames · Drag a diamond left or right to move its keyframe · Double-click a symbol name to enter it.`; const header = `<div class="time-row"><div class="track-name"><span class="eyebrow">LAYERS · ${sym.children.length}</span></div>${Array.from({ length: max }, (_, f) => `<div class="tick ${f % 10 === 0 ? 'ten' : ''} ${f === st.frame ? 'playhead' : ''}" data-frame="${f}" title="Frame ${f}">${f % 10 === 0 ? f : ''}${sym.labels.some(l => l.frame === f) ? '<span class="label-chip">▾</span>' : ''}</div>`).join('')}</div>`; const tracks = sym.children.map((c, i) => { const seqStart = new Map(c.sequences.map(v => [v.start, v])); const subSymbol = c.name === sym.name ? -1 : activeClip()?.symbols.findIndex(v => v.name === c.name) ?? -1; const cells = Array.from({ length: max }, (_, f) => { const span = c.sequences.find(v => f >= v.start && f < v.end); const spanClass = span ? `occupied ${span.tween ? 'tween-run' : 'hold-run'} ${f === span.start ? 'span-start' : ''} ${f === span.end - 1 ? 'span-end' : ''}` : ''; return `<div class="tick ${f % 10 === 0 ? 'ten' : ''} ${f === st.frame ? 'playhead' : ''} ${spanClass}" data-layerframe="${i}:${f}" title="${esc(c.name)} · Frame ${f}${span ? ' · ' + (span.tween ? 'Tween' : 'Hold') + ' (' + span.start + '–' + span.end + ')' : ''}">${seqStart.has(f) ? `<span class="key ${st.selected.layer === i && st.frame === f ? 'selected' : ''}"></span>` : ''}${span?.tween && f === span.end - 1 && f > span.start ? '<span class="span-arrow" aria-hidden="true">›</span>' : ''}</div>`; }).join(''); return `<div class="time-row"><div class="track-name ${st.selected.layer === i ? 'active' : ''}"><span class="circle" style="background:${c.name.startsWith('#') ? '#dfbd73' : '#b197eb'}"></span><button data-layer="${i}" title="${esc(c.name)}">${esc(c.name)}</button>${subSymbol >= 0 ? `<button class="drillbtn" data-drill="${subSymbol}" title="Open symbol: ${esc(c.name)}">↗</button>` : ''}</div>${cells}</div>`; }).join(''); const old = $('#timeline'), scrollLeft = old.scrollLeft, scrollTop = old.scrollTop; old.innerHTML = `<div class="timelinetable">${header}${tracks}</div>`; old.scrollLeft = scrollLeft; old.scrollTop = scrollTop; indexTimeline(); }
+function seek(frame) { setPlaying(false); st.frame = clamp(Math.trunc(frame), 0, frameCount() - 1); renderTimeline(); timelineRevealFrame(); renderInspector(); renderHead(); renderRequested = true; }
+function renderTimeline() {
+    const c = activeClip(), body = timelineBody();
+    body.closest('.timeline')?.style.setProperty('--tl-frame-px', `${timelineCellWidth}px`);
+    const slider = $('#timelineZoom');
+    if (slider)
+        slider.value = String(timelineCellWidth);
+    if (!c) {
+        body.innerHTML = '<div class="timeline-empty">Select an animation to view and edit keyframes.</div>';
+        $('#symbols').innerHTML = '';
+        return;
+    }
+    const sym = symbol();
+    $('#symbols').innerHTML = c.symbols.map((s, i) => `<option value="${i}" ${st.selected.symbol === i ? 'selected' : ''}>${s.main ? '★ ' : ''}${esc(s.name)} · ${s.children.length} layers / ${s.frames}f</option>`).join('');
+    if (!sym) {
+        body.innerHTML = '<div class="timeline-empty">No symbol found. Create a symbol in the inspector.</div>';
+        return;
+    }
+    const max = Math.max(1, Math.min(500, sym.frames));
+    const count = $('#layerCount');
+    if (count)
+        count.textContent = `· ${sym.children.length} layers`;
+    const foot = $('#timelineFoot');
+    if (foot)
+        foot.textContent = `${sym.name} · ${sym.children.length} tracks · ${sym.frames} frames · Drag ◆ to move keyframes · Click ruler to scrub · Timeline zoom is independent of canvas zoom`;
+    const labels = new Set(sym.labels.map(l => l.frame));
+    const interval = timelineCellWidth < 18 ? 20 : timelineCellWidth < 27 ? 10 : 5;
+    const header = `<div class="time-row time-ruler"><div class="track-name ruler-title"><span class="ruler-title-text">TRACK / PROPERTY</span><span class="ruler-count">${sym.children.length}</span></div>${Array.from({ length: max }, (_, f) => `<div class="tick ruler-tick ${f % interval === 0 ? 'major' : f % 5 === 0 ? 'medium' : ''} ${f === st.frame ? 'playhead' : ''}" data-frame="${f}" title="Frame ${f} · ${(f / 60).toFixed(2)}s">${f % interval === 0 ? `<span class="ruler-label">${f}</span>` : ''}${labels.has(f) ? '<span class="label-chip" title="Frame label">▾</span>' : ''}</div>`).join('')}</div>`;
+    const tracks = sym.children.map((c, i) => {
+        const keys = new Set(c.sequences.map(v => v.start));
+        const subSymbol = c.name === sym.name ? -1 : activeClip()?.symbols.findIndex(v => v.name === c.name) ?? -1;
+        const frames = Array.from({ length: max }, (_, f) => {
+            const span = c.sequences.find(v => f >= v.start && f < v.end);
+            const spanClass = span ? `occupied ${span.tween ? 'tween-run' : 'hold-run'} ${f === span.start ? 'span-start' : ''} ${f === span.end - 1 ? 'span-end' : ''}` : '';
+            return `<div class="tick frame-cell ${f % interval === 0 ? 'major' : ''} ${f === st.frame ? 'playhead' : ''} ${spanClass}" data-layerframe="${i}:${f}" title="${esc(c.name)} · Frame ${f}${span ? ' · ' + (span.tween ? 'Tween' : 'Hold') + ' (' + span.start + '–' + span.end + ')' : ''}">${keys.has(f) ? `<span class="key ${st.selected.layer === i && st.frame === f ? 'selected' : ''}" title="Keyframe ${f} · Drag horizontally to move"></span>` : ''}${span?.tween && f === span.end - 1 && f > span.start ? '<span class="span-arrow" aria-hidden="true">›</span>' : ''}</div>`;
+        }).join('');
+        const type = c.name.startsWith('#') ? 'LOOK' : subSymbol >= 0 ? 'ANIM' : 'SPRITE';
+        return `<div class="time-row track-row ${st.selected.layer === i ? 'track-selected' : ''}"><div class="track-name ${st.selected.layer === i ? 'active' : ''}"><span class="track-color ${type.toLowerCase()}"></span><button data-layer="${i}" title="${esc(c.name)}" aria-label="Select track ${esc(c.name)}">${esc(c.name)}</button>${subSymbol >= 0 ? `<button class="drillbtn" data-drill="${subSymbol}" title="Open symbol: ${esc(c.name)}">↗</button>` : ''}</div>${frames}</div>`;
+    }).join('');
+    const left = body.scrollLeft, top = body.scrollTop;
+    body.innerHTML = `<div class="timelinetable">${header}${tracks}<div class="timeline-playhead" id="timelinePlayhead" aria-hidden="true"><div class="timeline-playhead-head"></div></div></div>`;
+    body.scrollLeft = left;
+    body.scrollTop = top;
+    indexTimeline();
+}
 const field = (label, key, val, type = 'text', step = 'any') => `<div class="field"><label>${esc(label)}</label><input type="${type}" data-field="${key}" value="${esc(val)}" ${type === 'number' ? `step="${step}"` : ''}></div>`;
 const numeric = (label, key, v, step = '1') => field(label, key, v, 'number', step);
 function renderInspector() {
@@ -827,7 +938,7 @@ function spritePath(name, source) { if (!name.startsWith('@'))
     return cleanPath('anim/' + n.slice(1)); return cleanPath(source + n); }
 function defaultSkin() { return st.data?.clothes.find(l => l.key === st.skin) || st.data?.clothes.find(l => l.id === st.skin) || null; }
 function sourceRoot() { const d = doc(); const c = d?.clip; return c?.type === 'anim' ? (c.source ?? d?.source ?? '') : d?.source ?? ''; }
-function makeStage() { const host = $('#viewport'), w = host.clientWidth || 800, h = host.clientHeight || 480; canvasApp = new PIXI.Application(w, h, { antialias: true, transparent: true, preserveDrawingBuffer: true, resolution: Math.min(2, devicePixelRatio || 1), autoResize: false }); stage = new PIXI.Container(); gridLayer = new PIXI.Graphics(); ghostLayer = new PIXI.Container(); contentLayer = new PIXI.Container(); handleLayer = new PIXI.Graphics(); stage.addChild(gridLayer, ghostLayer, contentLayer, handleLayer); canvasApp.stage.addChild(stage); host.prepend(canvasApp.view); canvasApp.view.style.width = '100%'; canvasApp.view.style.height = '100%'; st.panX = w * .5; st.panY = h * .60; new ResizeObserver(() => { if (!canvasApp)
+function makeStage() { const host = $('#viewport'), w = host.clientWidth || 800, h = host.clientHeight || 480; canvasApp = new PIXI.Application(w, h, { antialias: false, transparent: true, preserveDrawingBuffer: false, resolution: Math.min(1.5, devicePixelRatio || 1), autoResize: false }); stage = new PIXI.Container(); gridLayer = new PIXI.Graphics(); ghostLayer = new PIXI.Container(); contentLayer = new PIXI.Container(); handleLayer = new PIXI.Graphics(); stage.addChild(gridLayer, ghostLayer, contentLayer, handleLayer); canvasApp.stage.addChild(stage); host.prepend(canvasApp.view); canvasApp.view.style.width = '100%'; canvasApp.view.style.height = '100%'; st.panX = w * .5; st.panY = h * .60; new ResizeObserver(() => { if (!canvasApp)
     return; const W = host.clientWidth, H = host.clientHeight; if (W && H) {
     canvasApp.renderer.resize(W, H);
     renderRequested = true;
@@ -919,14 +1030,128 @@ function drawNode(c, container, source, frame, symIdx = 0, depth = 0, opacity = 
         }
     }
 }
-function drawPreview() {
-    if (!canvasApp)
+let previewTree = null;
+let previewRateStart = performance.now(), previewRateFrames = 0;
+let lastClip = null, lastSceneSource = '', lastSceneSymbol = -1, lastSceneSkin = -1, lastSceneSelected = -2;
+let gridSignature = '';
+const previewStats = { sceneBuilds: 0, frameUpdates: 0, renderMs: 0, maxRenderMs: 0, layerCount: 0 };
+window.__TDE_PREVIEW_STATS = previewStats; // Diagnostic counters; no editing surface.
+function addPreviewSprite(path, container, anchor, isLook = false) {
+    spriteAt(path, container, { anchor, look: isLook }, -1);
+}
+function buildPreviewBranch(c, parent, source, symIndex, depth = 0, ancestors = []) {
+    const view = depth === 0 ? parent : new PIXI.Container();
+    if (view !== parent)
+        parent.addChild(view);
+    if (depth > 12)
+        return { kind: 'empty', view };
+    const currentSource = (c.type === 'anim' || c.type === 'creature') ? (c.source ?? source) : source;
+    if (c.type === 'image') {
+        const path = spritePath(c.code, currentSource);
+        if (path)
+            addPreviewSprite(path, view, c.anchor);
+        return { kind: 'image', view };
+    }
+    if (c.type === 'ref')
+        return { kind: 'empty', view };
+    if (c.type === 'creature') {
+        const sub = c.anims[st.selected.anim]?.clip ?? c.anims[0]?.clip;
+        if (!sub)
+            return { kind: 'empty', view };
+        return buildPreviewBranch(sub, view, currentSource, symIndex, depth + 1, ancestors);
+    }
+    const s = c.symbols[symIndex] || c.symbols[0];
+    if (!s || ancestors.includes(c.symbols.indexOf(s)))
+        return { kind: 'empty', view };
+    const ownIndex = c.symbols.indexOf(s), visiting = [...ancestors, ownIndex];
+    const symbols = new Map(c.symbols.map((v, i) => [v.name, i]));
+    const children = [];
+    for (let i = 0; i < s.children.length; i++) {
+        const ch = s.children[i];
+        const layer = new PIXI.Container();
+        layer.name = depth === 0 ? `editor-layer-${i}` : '';
+        view.addChild(layer);
+        let branch = null;
+        const ref = symbols.get(ch.name);
+        if (ref !== undefined && depth < 9) {
+            branch = buildPreviewBranch(c, layer, currentSource, ref, depth + 1, visiting);
+        }
+        else if (ch.name.startsWith('@')) {
+            const path = spritePath(ch.name, currentSource);
+            if (path)
+                addPreviewSprite(path, layer, ch.anchor);
+        }
+        else if (ch.name.startsWith('#')) {
+            const skin = defaultSkin(), name = ch.name.slice(1);
+            if (skin) {
+                skin.pieces.filter(p => p.slot === name).sort((a, b) => a.order - b.order).forEach(p => addPreviewSprite(`equipement/${skin.id}/${p.slot}.png`, layer, [p.x, p.y], true));
+            }
+            if (!skin?.pieces.some(p => p.slot === name) && depth === 0 && st.selected.layer === i) {
+                const bg = new PIXI.Graphics();
+                bg.lineStyle(1, 0xe7aa6d, .65).drawRect(-10, -10, 20, 20);
+                layer.addChild(bg);
+            }
+        }
+        if (depth === 0 && st.selected.layer === i) {
+            const g = new PIXI.Graphics();
+            g.lineStyle(1.2, 0xb792e5, .95);
+            g.drawCircle(0, 0, 5);
+            g.moveTo(-14, 0);
+            g.lineTo(14, 0);
+            g.moveTo(0, -14);
+            g.lineTo(0, 14);
+            g.beginFill(0xffc979).lineStyle(1.4, 0xffffff, 1).drawCircle(0, 0, 3).endFill();
+            layer.addChild(g);
+        }
+        children.push({ view: layer, child: ch, branch, lastSequence: null, lastFrame: -1 });
+    }
+    previewStats.layerCount += children.length;
+    return { kind: 'anim', view, children, frames: s.frames, loop: s.loop };
+}
+function applyPreviewFrame(node, frame) {
+    if (node.kind !== 'anim')
         return;
-    const w = canvasApp.renderer.width, h = canvasApp.renderer.height;
-    previewClear(ghostLayer);
-    previewClear(contentLayer);
+    const f = node.loop ? frame % Math.max(1, node.frames || 1) : clamp(frame, 0, Math.max(0, (node.frames || 1) - 1));
+    for (const entry of node.children || []) {
+        const item = entry.view;
+        // Resolve the winning interval in the same order as interp(). A hold track
+        // retains its transform until its interval changes; nested tracks still tick.
+        let current = null;
+        const seqs = entry.child.sequences;
+        for (let i = seqs.length - 1; i >= 0; i--) {
+            const q = seqs[i];
+            if (f >= q.start && f < q.end) {
+                current = q;
+                break;
+            }
+        }
+        if (!current) {
+            item.visible = false;
+            entry.lastSequence = null;
+            continue;
+        }
+        item.visible = true;
+        if (current !== entry.lastSequence || current.tween && entry.lastFrame !== f) {
+            const values = current.tween ? interp(entry.child, f)?.values : null;
+            const prop = (code) => values?.get(code) ?? getProp(current, code);
+            item.position.set(prop(10), prop(11));
+            item.rotation = prop(20);
+            item.skew.set(prop(21), prop(22));
+            item.scale.set(prop(30), prop(31));
+            item.alpha = prop(40);
+            entry.lastSequence = current;
+            entry.lastFrame = f;
+        }
+        if (entry.branch)
+            applyPreviewFrame(entry.branch, frame);
+    }
+}
+function updateGrid(w, h) {
+    const sig = [w, h, st.panX, st.panY, st.zoom, st.grid].join('|');
+    if (sig === gridSignature)
+        return;
+    gridSignature = sig;
     gridLayer.clear();
-    handleLayer.clear();
     const spacing = 25 * st.zoom;
     if (st.grid && spacing > 7) {
         gridLayer.lineStyle(1, 0xffffff, .095);
@@ -941,28 +1166,55 @@ function drawPreview() {
     }
     gridLayer.lineStyle(1, 0xffffff, .32);
     gridLayer.moveTo(st.panX, 0).lineTo(st.panX, h).moveTo(0, st.panY).lineTo(w, st.panY);
+}
+function drawPreview() {
+    if (!canvasApp)
+        return;
+    const begin = performance.now();
+    const w = canvasApp.renderer.width, h = canvasApp.renderer.height;
+    const document = doc(), c = document?.clip ?? null;
+    if (sceneDirty || c !== lastClip || document?.source !== lastSceneSource || st.selected.symbol !== lastSceneSymbol || st.skin !== lastSceneSkin || st.selected.layer !== lastSceneSelected) {
+        previewClear(contentLayer);
+        previewTree = null;
+        previewStats.layerCount = 0;
+        if (c)
+            previewTree = buildPreviewBranch(c, contentLayer, document?.source ?? '', st.selected.symbol);
+        lastClip = c;
+        lastSceneSource = document?.source ?? '';
+        lastSceneSymbol = st.selected.symbol;
+        lastSceneSkin = st.skin;
+        lastSceneSelected = st.selected.layer;
+        sceneDirty = false;
+        previewStats.sceneBuilds++;
+    }
+    // Onion skin is editing-only. Preserve it while paused; do not redraw it on
+    // every playback frame or let ghost sprites survive when playback starts.
+    if (ghostLayer.children.length)
+        previewClear(ghostLayer);
+    updateGrid(w, h);
     const scale = st.zoom * (st.flip ? -1 : 1);
     ghostLayer.position.set(st.panX, st.panY);
     ghostLayer.scale.set(scale, st.zoom);
     contentLayer.position.set(st.panX, st.panY);
     contentLayer.scale.set(scale, st.zoom);
-    const document = doc();
-    if (document) {
-        const c = document.clip;
-        if (st.onion && c.type === 'anim' && !st.playing) {
-            for (const [diff, alpha] of [[-2, .13], [-1, .27], [1, .27], [2, .13]]) {
-                const f = st.frame + diff;
-                if (f >= 0 && f < frameCount()) {
-                    const layer = new PIXI.Container();
-                    ghostLayer.addChild(layer);
-                    drawNode(c, layer, document.source, f, st.selected.symbol, 0, alpha, false);
-                }
+    if (document?.clip && st.onion && !st.playing && document.clip.type === 'anim') {
+        for (const [diff, alpha] of [[-2, .13], [-1, .27], [1, .27], [2, .13]]) {
+            const f = st.frame + diff;
+            if (f >= 0 && f < frameCount()) {
+                const layer = new PIXI.Container();
+                ghostLayer.addChild(layer);
+                drawNode(document.clip, layer, document.source, f, st.selected.symbol, 0, alpha, false);
             }
         }
-        drawNode(c, contentLayer, document.source, st.frame, st.selected.symbol);
     }
-    syncZoomControls();
+    if (previewTree)
+        applyPreviewFrame(previewTree, st.frame);
     renderRequested = false;
+    previewStats.frameUpdates++;
+    if (st.playing)
+        previewRateFrames++;
+    previewStats.renderMs = performance.now() - begin;
+    previewStats.maxRenderMs = Math.max(previewStats.maxRenderMs, previewStats.renderMs);
 }
 function tick(_delta) {
     const now = performance.now(), dt = Math.min(100, now - lastFrame);
@@ -983,7 +1235,6 @@ function tick(_delta) {
                 }
             }
             updatePlaybackFrame();
-            renderSlotSignal();
             renderRequested = true;
         }
     }
@@ -1022,6 +1273,7 @@ function setupCanvas() {
         }
     } if (target >= 0) {
         st.selected.layer = target;
+        sceneDirty = true;
         renderInspector();
         renderTimeline();
         const seq = currentSeq(false), startX = seq ? getProp(seq, 10) : 0, startY = seq ? getProp(seq, 11) : 0;
@@ -1042,6 +1294,7 @@ function setupCanvas() {
         markUndo();
         drag.changed = true;
     } if (drag.mode === 'pivot') {
+        sceneDirty = true;
         const lookPiece = c.name.startsWith('#') ? defaultSkin()?.pieces.find(p => p.slot === c.name.slice(1)) : null;
         if (lookPiece) {
             lookPiece.x = Math.round(drag.startV - dx);
@@ -1172,6 +1425,7 @@ async function chooseFolder() { const picker = window.showDirectoryPicker; if (!
     st.cache.forEach(u => { if (u.startsWith('blob:'))
         URL.revokeObjectURL(u); });
     st.cache.clear();
+    sceneDirty = true;
     renderRequested = true;
     notify('Asset folder connected (read-only): ' + st.folder.name);
 }
@@ -1346,6 +1600,7 @@ async function importPng(file, targetPath) {
         URL.revokeObjectURL(prev);
     st.overrides.set(path, file);
     st.cache.set(path, URL.createObjectURL(file));
+    sceneDirty = true;
     renderRequested = true;
     refresh();
     notify('PNG applied to the preview: ' + path + ' (export the Asset ZIP along with the BIN)');
@@ -2064,6 +2319,7 @@ async function handleAction(action, index) { const d = st.data; switch (action) 
             }
             st.assetRoot = trimmed;
             assetStatuses.clear();
+            sceneDirty = true;
             renderRequested = true;
             refresh();
         }
@@ -2227,6 +2483,18 @@ root.addEventListener('error', ev => { const img = ev.target; if (img instanceof
 } }, true);
 root.addEventListener('click', async (ev) => { const t = ev.target; const action = t.closest('[data-action]'); if (action) {
     ev.preventDefault();
+    if (action.dataset.action === 'timelineZoomIn') {
+        timelineZoom(timelineCellWidth + 4);
+        return;
+    }
+    if (action.dataset.action === 'timelineZoomOut') {
+        timelineZoom(timelineCellWidth - 4);
+        return;
+    }
+    if (action.dataset.action === 'timelineFit') {
+        timelineFit();
+        return;
+    }
     if (action.dataset.action === 'closeModal') {
         $('#modal').classList.add('hidden');
         return;
@@ -2326,6 +2594,63 @@ root.addEventListener('click', event => {
     }
 }, true);
 const timelineEl = $('#timeline');
+// Click or drag on the ruler to scrub without affecting any keyframe or the BIN.
+function scrubFrame(clientX) {
+    const ruler = timelineEl.querySelector('.ruler-tick');
+    if (!ruler)
+        return;
+    const start = ruler.getBoundingClientRect().left;
+    const frame = clamp(Math.floor((clientX - start) / timelineCellWidth), 0, frameCount() - 1);
+    if (frame === st.frame)
+        return;
+    st.frame = frame;
+    updatePlaybackFrame();
+    renderInspector();
+    renderHead();
+    renderRequested = true;
+}
+timelineEl.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !event.isPrimary)
+        return;
+    if (!event.target.closest('.ruler-tick'))
+        return;
+    setPlaying(false);
+    timelineScrubbing = event.pointerId;
+    scrubStartFrame = st.frame;
+    scrubMoved = false;
+    scrubFrame(event.clientX);
+    try {
+        timelineEl.setPointerCapture(event.pointerId);
+    }
+    catch { }
+    event.preventDefault();
+});
+timelineEl.addEventListener('pointermove', event => { if (timelineScrubbing === event.pointerId) {
+    const was = st.frame;
+    scrubFrame(event.clientX);
+    if (st.frame !== scrubStartFrame || was !== st.frame)
+        scrubMoved = true;
+    event.preventDefault();
+} });
+timelineEl.addEventListener('pointerup', event => { if (timelineScrubbing === event.pointerId) {
+    timelineScrubbing = null;
+    if (scrubMoved) {
+        suppressDragClick = true;
+        window.setTimeout(() => { suppressDragClick = false; }, 0);
+    }
+    try {
+        timelineEl.releasePointerCapture(event.pointerId);
+    }
+    catch { }
+} });
+timelineEl.addEventListener('pointercancel', event => { if (timelineScrubbing === event.pointerId)
+    timelineScrubbing = null; });
+timelineEl.addEventListener('wheel', event => {
+    if (!event.ctrlKey && !event.altKey)
+        return;
+    event.preventDefault();
+    timelineZoom(timelineCellWidth + (event.deltaY < 0 ? 2 : -2));
+}, { passive: false });
 timelineEl.addEventListener('pointerdown', event => {
     if (event.button !== 0 || !event.isPrimary)
         return;
@@ -2426,6 +2751,7 @@ function finishKeyDrag(event, cancel = false) {
 timelineEl.addEventListener('pointerup', event => finishKeyDrag(event));
 timelineEl.addEventListener('pointercancel', event => finishKeyDrag(event, true));
 window.addEventListener('blur', () => {
+    timelineScrubbing = null;
     if (!keyDrag)
         return;
     clearKeyDragVisuals();
@@ -2444,6 +2770,7 @@ root.addEventListener('change', e => { const input = e.target; if (input.dataset
     return;
 } if (input.id === 'previewSkin') {
     st.skin = Number(input.value);
+    sceneDirty = true;
     renderInspector();
     renderSlotSignal();
     renderRequested = true;
@@ -2458,11 +2785,26 @@ root.addEventListener('change', e => { const input = e.target; if (input.dataset
 } if (input.id === 'zoomRange') {
     setZoom(Number(input.value) / 100);
     return;
+} if (input.id === 'timelineFrameInput') {
+    const n = Number(input.value);
+    if (Number.isFinite(n))
+        seek(n);
+    else
+        input.value = String(st.frame);
+    return;
+} if (input.id === 'timelineZoom') {
+    timelineZoom(Number(input.value));
+    return;
 } if (input.id === 'speed')
     st.speed = Number(input.value); if (input.id === 'previewLoop')
     st.loop = input.checked; });
 $('#search').addEventListener('input', (e) => { st.search = e.target.value; renderLibrary(); });
 $('#zoomRange').addEventListener('input', e => { setZoom(Number(e.target.value) / 100); });
+$('#timelineZoom').addEventListener('input', e => timelineZoom(Number(e.target.value)));
+$('#timelineFrameInput').addEventListener('keydown', e => { if (e.key === 'Enter') {
+    e.preventDefault();
+    e.target.blur();
+} });
 $('#fileBin').addEventListener('change', e => { const f = e.target.files?.[0]; if (f)
     void openFile(f); e.target.value = ''; });
 $('#fileAnim').addEventListener('change', async (e) => { const f = e.target.files?.[0]; if (f) {
