@@ -1,13 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="theme-color" content="#1c2024"/><title>Transformice Data Editor</title><link rel="icon" type="image/svg+xml" href="./favicon.svg"/><link rel="stylesheet" href="./styles.css"/><link rel="stylesheet" href="./studio-v2.css"/><link rel="stylesheet" href="./studio-v161.css?v=162"/><style id="tde-dock-safety">
-.app{position:relative}
-.app>.top{grid-row:1;grid-column:1/-1}
-.app>.library{grid-row:2;grid-column:1;min-width:0}
-.app>.workspace{grid-row:2;grid-column:2;min-width:0;position:relative}
-.app>.inspector{grid-row:2;grid-column:3;min-width:0}
-.app>.dock-split,.workspace>.timeline-split,.timeline>.track-split{position:absolute}
-@media(max-width:1050px){.app>.workspace{grid-row:2;grid-column:2}.app>.inspector{grid-row:auto;grid-column:auto}}
-@media(max-width:700px){.app>.library{grid-row:auto;grid-column:auto}.app>.workspace{grid-row:2;grid-column:1}}
-</style><link rel="stylesheet" href="./studio-v162.css?v=162"/><link rel="stylesheet" href="./studio-v163.css?v=163"/></head><body><div id="app"></div><script src="./vendor/pixi.js"></script><script src="./vendor/pako.min.js"></script><script src="./vendor/howler.js"></script><script>
+<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="theme-color" content="#1c2024"/><title>Transformice Data Editor</title><link rel="icon" type="image/svg+xml" href="./favicon.svg"/><link rel="stylesheet" href="./studio.css?v=20261014"/></head><body><div id="app"></div><script src="./vendor/pixi.js"></script><script src="./vendor/pako.min.js"></script><script src="./vendor/howler.js"></script><script>
 const te = new TextEncoder(), td = new TextDecoder('utf-8', { fatal: true });
 class Reader {
     buf;
@@ -322,6 +313,133 @@ function moveKeyframe(child, from, to, frames) {
     return { ok: true, reason: `Keyframe moved from ${from} to ${to}` };
 }
 
+/** Pose creation and references in the original TFMA data.bin wire model.
+ * "Pose" is a user-facing term: no new binary fields or clip types are invented.
+ */
+const copy = (v) => structuredClone(v);
+const utf8 = new TextEncoder();
+function validatePoseName(name, clip) {
+    if (!name || name !== name.trim() || /^[@#]/.test(name) || /[\x00-\x1F]/.test(name))
+        throw Error('Enter a valid pose name (no # or @ prefix).');
+    if (utf8.encode(name).length > 255)
+        throw Error('Pose name is too long (maximum 255 UTF-8 bytes).');
+    if (clip.symbols.some(s => s.name === name))
+        throw Error(`A pose named “${name}” already exists in this animation.`);
+}
+function suggestPoseName(clip) { let n = 1; while (clip.symbols.some(s => s.name === `pose_${n}`))
+    n++; return `pose_${n}`; }
+/** Static animations belong to the same creature, not a global pool. */
+function getStaticPoseSources(monster) {
+    if (monster?.clip.type !== 'creature')
+        return [];
+    const out = [];
+    for (const entry of monster.clip.anims) {
+        if (!/^statique(?::|$)/i.test(entry.name) || entry.clip.type !== 'anim')
+            continue;
+        const clip = entry.clip;
+        // The main symbol is often only a wrapper around a multi-layer nested pose.
+        const poses = clip.symbols.filter(s => !s.main && s.children.length);
+        const pose = (poses.length ? poses : clip.symbols).slice().sort((a, b) => b.children.length - a.children.length)[0];
+        if (pose)
+            out.push({ label: `${entry.name} → ${pose.name} (${pose.children.length} layers)`, animationName: entry.name, clip, pose });
+    }
+    return out.sort((a, b) => Number(b.animationName === 'statique') - Number(a.animationName === 'statique') || a.animationName.localeCompare(b.animationName, 'en'));
+}
+/** Check reachability before inserting a nested pose. Cyclic animation references
+ * would otherwise make the renderer recurse indefinitely. */
+function wouldCreatePoseCycle(clip, parentIndex, referenceName) {
+    const parent = clip.symbols[parentIndex];
+    if (!parent)
+        return true;
+    const explored = new Set();
+    const visit = (name) => {
+        if (name === parent.name)
+            return true;
+        if (explored.has(name))
+            return false;
+        explored.add(name);
+        const linked = clip.symbols.find(s => s.name === name);
+        return !!linked?.children.some(c => visit(c.name));
+    };
+    return visit(referenceName);
+}
+function uniqueDependencyName(clip, base, taken) {
+    const short = base.slice(0, 180);
+    let name = short, idx = 2;
+    while (taken.has(name) || clip.symbols.some(s => s.name === name))
+        name = `${short}_${idx++}`;
+    taken.add(name);
+    return name;
+}
+/** Copy the complete referenced pose graph when importing a static preset from
+ * a DIFFERENT animation. This prevents broken sub-pose links in exported BINs.
+ * For the SAME animation the existing nested poses are reused, not cloned.
+ */
+function importStaticLayers(source, target, newPoseName, frames) {
+    const map = new Map(), taken = new Set([newPoseName]);
+    const visiting = new Set();
+    const importDependency = (oldName) => {
+        const dep = source.clip.symbols.find(s => s.name === oldName);
+        if (!dep)
+            return oldName; // ordinary sprite or Look slot
+        if (source.clip === target)
+            return oldName;
+        if (map.has(oldName))
+            return map.get(oldName);
+        if (visiting.has(oldName))
+            throw Error(`Cyclic source pose reference: ${oldName}`);
+        visiting.add(oldName);
+        const name = uniqueDependencyName(target, `${newPoseName}_${oldName}`, taken);
+        map.set(oldName, name);
+        const clone = { ...copy(dep), main: false, name };
+        clone.children = clone.children.map(child => ({ ...child, name: importDependency(child.name) }));
+        target.symbols.push(clone);
+        visiting.delete(oldName);
+        return name;
+    };
+    return source.pose.children.map(child => {
+        // The static preset starts in a ready-to-animate pose (frame 0), rather
+        // than silently inheriting all of statique's animated keyframe sequences.
+        const start = interp(child, 0)?.sequence ?? child.sequences[0];
+        const seq = { ...defaults(0, frames), props: copy(start?.props ?? []) };
+        return { name: importDependency(child.name), anchor: copy(child.anchor), sequences: [seq] };
+    });
+}
+function addPose(clip, options) {
+    const { name, frames, preset, source, current } = options;
+    validatePoseName(name, clip);
+    if (!Number.isInteger(frames) || frames < 1 || frames > 65535)
+        throw Error('Pose length must be between 1 and 65535 frames.');
+    if (preset === 'static' && !source)
+        throw Error('Choose an available statique pose preset.');
+    if (preset === 'duplicate' && !current)
+        throw Error('Select a current pose to duplicate.');
+    if (options.attachTo !== undefined && options.attachTo !== null && !clip.symbols[options.attachTo])
+        throw Error('The parent pose is no longer available.');
+    let children = [];
+    let labels = [];
+    if (preset === 'static')
+        children = importStaticLayers(source, clip, name, frames);
+    else if (preset === 'duplicate') {
+        children = copy(current.children);
+        labels = copy(current.labels);
+        // Preserve transforms/intervals while respecting the chosen length.
+        for (const child of children) {
+            child.sequences = child.sequences.filter(s => s.start < frames).map(s => ({ ...s, end: Math.min(s.end, frames) })).filter(s => s.end > s.start);
+        }
+        labels = labels.filter(l => l.frame < frames);
+    }
+    const index = clip.symbols.length;
+    clip.symbols.push({ main: false, name, frames, loop: current?.loop ?? true, labels, children });
+    if (options.attachTo !== undefined && options.attachTo !== null) {
+        const parent = clip.symbols[options.attachTo];
+        if (wouldCreatePoseCycle(clip, options.attachTo, name))
+            throw Error('Cannot insert a pose that would create a recursive loop.');
+        parent.children.push({ name, anchor: null, sequences: [defaults(0, parent.frames)] });
+    }
+    return index;
+}
+
 const $ = (sel) => document.querySelector(sel);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const deep = (v) => structuredClone(v);
@@ -333,7 +451,7 @@ const tabTitles = { monsters: 'Animations', fx: 'VFX / Effects', looks: 'Looks',
 const root = $('#app');
 root.innerHTML = `<div class="app"><header class="top"><div class="mark"><div class="logo">M</div><div class="brand">Transformice <span style="color:#8fd9ca">Data Editor</span><small>ANIMATION · VFX · LOOKS · SFX</small></div></div><div class="bar"><button class="btn quiet mobiletab" data-action="toggleLibrary">${ico('list')}</button><button class="btn small quiet" data-action="loadGame" title="Load the current data.bin from the official game server">Game BIN</button><button class="btn" data-action="open">${ico('folder')}<span class="hide-tight"> Open BIN</span></button><button class="btn quiet hide-tablet" data-action="folder">${ico('image')} Local assets</button><button class="btn quiet hide-tablet" data-action="url">${ico('upload')} URL</button><button class="btn quiet hide-tablet" data-action="projectExport">${ico('code')} JSON</button></div><div class="bar push"><button class="btn icon quiet" data-action="undo" title="Undo Ctrl+Z">${ico('undo')}</button><button class="btn icon quiet" data-action="redo" title="Redo Ctrl+Y">${ico('redo')}</button><div class="separator hide-tablet"></div><span class="status" id="status">Loading...</span><button class="btn small quiet hidden" id="issueCount" data-action="issues" aria-label="Open diagnostics">Issues 0</button><button class="btn primary" data-action="save">${ico('download')} <span class="hide-tight">Export</span> data.bin</button><button class="btn quiet mobiletab" data-action="toggleInspector">${ico('settings')}</button></div></header>
 <aside class="sidebar library" id="library"><div class="sidehead"><div><div class="eyebrow">ASSET EXPLORER</div><h2 class="heading">Library</h2></div><button class="btn icon quiet" data-action="newEntry" title="Add entry">${ico('plus')}</button></div><div class="tabbar" id="tabs"></div><div class="searchwrap"><input class="search" id="search" placeholder="Search name, ID or part…" autocomplete="off"/></div><div class="list" id="libraryList"></div><div class="sidebarfoot" id="libraryFoot"></div></aside>
-<div class="dock-split library-split" data-resize="library" role="separator" aria-label="Resize library panel" aria-orientation="vertical" title="Drag to resize library"></div><main class="workspace"><div class="worktop"><div class="docname" id="docname">No animation selected</div><div class="workactions"><button class="btn small quiet" data-action="symbolBack" id="symbolBack" title="Back to previous symbol" style="display:none">← Symbol</button><button class="btn small quiet" data-action="copyAnim">${ico('copy')} <span class="hide-tight">Duplicate</span></button><button class="btn small quiet" data-action="importAnim">${ico('upload')} <span class="hide-tight">Import</span></button><button class="btn small quiet" data-action="exportAnim">${ico('download')} <span class="hide-tight">Animation</span></button></div></div><div class="viewport" id="viewport"><div class="canvas-toolbar"><button class="selected" data-action="modeMove" id="modeMove">${ico('move')} Move</button><button data-action="modePivot" id="modePivot">${ico('crosshair')} Pivot</button><button data-action="grid">${ico('grid')} Grid</button><button data-action="flip">${ico('flip')} Flip</button><button data-action="onion">${ico('layers')} Onion</button><button data-action="fit" title="Fit to view">${ico('crosshair')}</button></div><div class="canvas-help" id="canvasHelp">Select a layer · Drag to move or adjust its pivot · Scroll to zoom</div><div class="skin-switch"><label for="previewSkin">Preview look</label><select id="previewSkin" class="select-mini"></select><span class="skin-signal" id="skinSignal" title="Selected part status"></span></div><div class="zoom-controls" role="group" aria-label="Preview zoom"><button type="button" class="zoom-native" data-action="zoom100" title="Actual game scale: 1 game pixel = 1 CSS pixel">100%</button><input type="range" class="zoom-range" id="zoomRange" min="25" max="800" step="5" value="200" aria-label="Preview zoom percentage"/><output class="zoom-badge" id="zoomLabel" for="zoomRange">200%</output></div><div class="dropalert hidden" id="droplabel">Drop a .bin / .json / .png file</div></div><div class="playbar" role="toolbar" aria-label="Playback controls"><span class="player-group"><button class="btn icon quiet" data-action="first" title="First frame" aria-label="First frame">${ico('back')}</button><button class="btn icon quiet" data-action="prev" title="Previous frame (←)" aria-label="Previous frame">${ico('back')}</button><button class="btn icon" data-action="play" id="playbtn" title="Play (Space)" aria-label="Play" aria-pressed="false">${ico('play')}</button><button class="btn icon quiet" data-action="next" title="Next frame (→)" aria-label="Next frame">${ico('skip')}</button><button class="btn icon quiet" data-action="last" title="Last frame" aria-label="Last frame">${ico('skip')}</button></span><span class="counter" id="frameinfo" aria-live="off"><strong>0</strong> / 0</span><label class="preview-loop" title="Loop preview; does not change data.bin"><input id="previewLoop" type="checkbox" checked/> Loop</label><div class="separator"></div><span class="muted">Speed</span><select class="select-mini" id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select><div class="grow"></div><span class="muted" id="previewFps" title="Measured preview redraw rate (not the game's fixed timebase)" style="font-size:11px;white-space:nowrap">Preview —</span><span class="fps-control" title="Fixed game animation timebase. The BIN does not store an FPS setting.">60 FPS</span></div><section class="timeline"><div class="dock-split track-split" data-resize="track" role="separator" aria-label="Resize layer names" aria-orientation="vertical" title="Drag to resize layer names"></div><div class="timelinehead"><span class="eyebrow">TIMELINE <span id="layerCount"></span></span><select id="symbols" class="select-mini" style="max-width:150px"></select><div class="separator"></div><button class="btn small quiet" data-action="keyAdd" title="K: add keyframe">${ico('diamond')} Key</button><button class="btn small quiet" data-action="keyDel" title="Del: remove keyframe">${ico('minus')}</button><button class="btn small quiet" data-action="layerAdd">${ico('plus')} Layer</button><button class="btn small primary part-wizard-btn" data-action="partWizard">${ico('plus')} New part #</button><button class="btn small quiet" data-action="layerUp" title="Move layer up">↑</button><button class="btn small quiet" data-action="layerDown" title="Move layer down">↓</button><div class="grow"></div><div class="timeline-view-tools" role="group" aria-label="Timeline navigation"><label class="frame-jump">Frame <input id="timelineFrameInput" type="number" min="0" step="1" value="0" aria-label="Jump to frame" title="Enter a frame to jump to it"/></label><span class="timeline-separator"></span><button class="tl-zoom-btn" data-action="timelineZoomOut" type="button" aria-label="Zoom out timeline" title="Zoom out timeline">−</button><input id="timelineZoom" class="tl-zoom" type="range" min="12" max="40" step="2" value="24" aria-label="Timeline zoom (frame width)" title="Frame width"/><button class="tl-zoom-btn" data-action="timelineZoomIn" type="button" aria-label="Zoom in timeline" title="Zoom in timeline">+</button><button class="tl-fit" type="button" data-action="timelineFit" title="Fit all frames in the timeline">Fit</button></div><button class="btn small quiet hide-tablet" data-action="frameAdd">+ Frame</button><button class="btn small quiet hide-tablet" data-action="frameDel">− Frame</button></div><div class="timelinebody" id="timeline"></div><div class="timelinefoot" id="timelineFoot">Select a symbol to inspect its layers.</div></section><div class="dock-split timeline-split" data-resize="timeline" role="separator" aria-label="Resize timeline height" aria-orientation="horizontal" title="Drag to resize timeline"></div></main>
+<div class="dock-split library-split" data-resize="library" role="separator" aria-label="Resize library panel" aria-orientation="vertical" title="Drag to resize library"></div><main class="workspace"><div class="worktop"><div class="docname" id="docname">No animation selected</div><div class="workactions"><button class="btn small quiet" data-action="symbolBack" id="symbolBack" title="Back to previous pose" style="display:none">← Pose</button><button class="btn small quiet" data-action="copyAnim">${ico('copy')} <span class="hide-tight">Duplicate</span></button><button class="btn small quiet" data-action="importAnim">${ico('upload')} <span class="hide-tight">Import</span></button><button class="btn small quiet" data-action="exportAnim">${ico('download')} <span class="hide-tight">Animation</span></button></div></div><div class="viewport" id="viewport"><div class="canvas-toolbar"><button class="selected" data-action="modeMove" id="modeMove">${ico('move')} Move</button><button data-action="modePivot" id="modePivot">${ico('crosshair')} Pivot</button><button data-action="grid">${ico('grid')} Grid</button><button data-action="flip">${ico('flip')} Flip</button><button data-action="onion">${ico('layers')} Onion</button><button data-action="fit" title="Fit to view">${ico('crosshair')}</button></div><div class="canvas-help" id="canvasHelp">Left-drag: move / pivot · Right-drag: pan camera · Scroll: zoom</div><div class="skin-switch"><label for="previewSkin">Preview look</label><select id="previewSkin" class="select-mini"></select><span class="skin-signal" id="skinSignal" title="Selected part status"></span></div><div class="zoom-controls" role="group" aria-label="Preview zoom"><button type="button" class="zoom-native" data-action="zoom100" title="Actual game scale: 1 game pixel = 1 CSS pixel">100%</button><input type="range" class="zoom-range" id="zoomRange" min="25" max="800" step="5" value="200" aria-label="Preview zoom percentage"/><output class="zoom-badge" id="zoomLabel" for="zoomRange">200%</output></div><div class="dropalert hidden" id="droplabel">Drop a .bin / .json / .png file</div></div><div class="playbar" role="toolbar" aria-label="Playback controls"><span class="player-group"><button class="btn icon quiet" data-action="first" title="First frame" aria-label="First frame">${ico('back')}</button><button class="btn icon quiet" data-action="prev" title="Previous frame (←)" aria-label="Previous frame">${ico('back')}</button><button class="btn icon" data-action="play" id="playbtn" title="Play (Space)" aria-label="Play" aria-pressed="false">${ico('play')}</button><button class="btn icon quiet" data-action="next" title="Next frame (→)" aria-label="Next frame">${ico('skip')}</button><button class="btn icon quiet" data-action="last" title="Last frame" aria-label="Last frame">${ico('skip')}</button></span><span class="counter" id="frameinfo" aria-live="off"><strong>0</strong> / 0</span><label class="preview-loop" title="Loop preview; does not change data.bin"><input id="previewLoop" type="checkbox" checked/> Loop</label><div class="separator"></div><span class="muted">Speed</span><select class="select-mini" id="speed"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select><div class="grow"></div><span class="muted" id="previewFps" title="Measured preview redraw rate (not the game's fixed timebase)" style="font-size:11px;white-space:nowrap">Preview —</span><span class="fps-control" title="Fixed game animation timebase. The BIN does not store an FPS setting.">60 FPS</span></div><section class="timeline"><div class="dock-split track-split" data-resize="track" role="separator" aria-label="Resize layer names" aria-orientation="vertical" title="Drag to resize layer names"></div><div class="timelinehead"><span class="eyebrow">TIMELINE <span id="layerCount"></span></span><select id="symbols" class="select-mini" style="max-width:150px"></select><div class="separator"></div><button class="btn small quiet" data-action="keyAdd" title="K: add keyframe">${ico('diamond')} Key</button><button class="btn small quiet" data-action="keyDel" title="Del: remove keyframe">${ico('minus')}</button><button class="btn small quiet" data-action="layerAdd">${ico('plus')} Layer</button><button class="btn small quiet pose-toolbar-btn" data-action="newSymbol" title="Create an empty or preset pose">${ico('layers')} New Pose</button><button class="btn small primary part-wizard-btn" data-action="partWizard">${ico('plus')} New part #</button><button class="btn small quiet" data-action="layerUp" title="Move layer up">↑</button><button class="btn small quiet" data-action="layerDown" title="Move layer down">↓</button><div class="grow"></div><div class="timeline-view-tools" role="group" aria-label="Timeline navigation"><label class="frame-jump">Frame <input id="timelineFrameInput" type="number" min="0" step="1" value="0" aria-label="Jump to frame" title="Enter a frame to jump to it"/></label><span class="timeline-separator"></span><button class="tl-zoom-btn" data-action="timelineZoomOut" type="button" aria-label="Zoom out timeline" title="Zoom out timeline">−</button><input id="timelineZoom" class="tl-zoom" type="range" min="12" max="40" step="2" value="24" aria-label="Timeline zoom (frame width)" title="Frame width"/><button class="tl-zoom-btn" data-action="timelineZoomIn" type="button" aria-label="Zoom in timeline" title="Zoom in timeline">+</button><button class="tl-fit" type="button" data-action="timelineFit" title="Fit all frames in the timeline">Fit</button></div><button class="btn small quiet hide-tablet" data-action="frameAdd">+ Frame</button><button class="btn small quiet hide-tablet" data-action="frameDel">− Frame</button></div><div class="timelinebody" id="timeline"></div><div class="timelinefoot" id="timelineFoot">Select a pose to inspect its layers.</div></section><div class="dock-split timeline-split" data-resize="timeline" role="separator" aria-label="Resize timeline height" aria-orientation="horizontal" title="Drag to resize timeline"></div></main>
 <div class="dock-split inspector-split" data-resize="inspector" role="separator" aria-label="Resize inspector panel" aria-orientation="vertical" title="Drag to resize inspector"></div><aside class="sidebar inspector" id="inspector"><div class="sidehead"><div><div class="eyebrow">PROPERTIES</div><h2 class="heading">Inspector</h2></div><button class="btn icon quiet" data-action="help">${ico('help')}</button></div><div class="inspect-scroll" id="inspectContent"></div></aside></div><input type="file" id="fileBin" accept=".bin,.json" hidden/><input type="file" id="fileAnim" accept=".json" hidden/><input type="file" id="filePng" accept=".png,image/png" hidden/><input type="file" id="fileSound" accept=".mp3,audio/mpeg" hidden/><div class="overlay hidden" id="modal"></div><div class="notice hidden" id="notice"></div>`;
 const lookGroupOrder = ['Fur', 'Hat', 'Face', 'Ears', 'Mouth', 'Tail', 'Shoulders', 'Clothing', 'Right hand', 'Left hand', 'Shield', 'Accessories', 'Effects', 'Other'];
 const openLookGroups = new Set(['Fur', 'Hat']);
@@ -376,6 +494,7 @@ let currentItemID = 2;
 let currentItemPath = '';
 let canvasApp, stage, gridLayer, ghostLayer, contentLayer, handleLayer;
 let lastFrame = performance.now(), elapsed = 0, renderRequested = true, sceneDirty = true, drag = null;
+let canvasDragPointerId = null;
 let sound = null, toastTimeout = 0, saveTimeout = 0, localDB = null;
 const issueHistory = [];
 function issueMessage(e) { return e instanceof Error ? e.message : String(e ?? 'Unknown failure'); }
@@ -495,11 +614,33 @@ function mutate(fn, opts = {}) {
         return false;
     }
 }
-function restore(dir) { if (!st.data)
-    return; const from = st[dir], to = dir === 'undo' ? st.redo : st.undo, v = from.pop(); if (!v) {
-    notify('Nothing to ' + (dir === 'undo' ? 'undo' : 'redo'));
-    return;
-} to.push(encodeBin(st.data)); st.data = parseBin(v); st.dirty = true; refresh(); saveDraft(); }
+function restore(dir) {
+    if (!st.data)
+        return;
+    const from = st[dir], to = dir === 'undo' ? st.redo : st.undo, v = from.pop();
+    if (!v) {
+        notify('Nothing to ' + (dir === 'undo' ? 'undo' : 'redo'));
+        return;
+    }
+    to.push(encodeBin(st.data));
+    st.data = parseBin(v);
+    st.dirty = true;
+    // Structural undo may remove the currently inspected Pose. Return to a
+    // valid parent rather than leaving a blank timeline and broken inspector.
+    if (!symbol()) {
+        while (symbolTrail.length && !symbol()) {
+            st.selected.symbol = symbolTrail.pop();
+        }
+        if (!symbol())
+            st.selected.symbol = 0;
+        st.selected.layer = -1;
+    }
+    if (st.selected.layer >= (symbol()?.children.length ?? 0))
+        st.selected.layer = -1;
+    st.frame = clamp(st.frame, 0, frameCount() - 1);
+    refresh();
+    saveDraft();
+}
 function refresh() { sceneDirty = true; renderTabs(); renderLibrary(); renderHead(); renderTimeline(); renderInspector(); renderSkinPicker(); renderRequested = true; }
 function renderTabs() { $('#tabs').innerHTML = tabs.map(([t, i]) => `<button class="${st.tab === t ? 'active' : ''}" data-tab="${t}">${ico(i)}<span>${t === 'monsters' ? 'Anim' : t === 'fx' ? 'VFX' : t === 'looks' ? 'Looks' : t === 'items' ? 'Items' : t === 'sounds' ? 'SFX' : 'IDs'}</span></button>`).join(''); }
 function syncZoomControls() { const pct = Math.round(st.zoom * 100); const out = $('#zoomLabel'); if (out)
@@ -530,14 +671,14 @@ function renderSlotSignal() {
     if (!c?.name.startsWith('#')) {
         el.textContent = '';
         el.className = 'skin-signal';
-        help.textContent = 'Drag to move · Use Pivot to align · Double-click a symbol to open its layers';
+        help.textContent = 'Left-drag to edit · Right-drag to pan · Double-click a Pose layer to open it';
         return;
     }
     const { skin, piece, path, hasSprite, pendingSprite } = slotInfo(c.name), hasKey = !!interp(c, st.frame);
     const issues = [!skin ? 'no look selected' : !piece ? 'slot not registered' : null, !hasSprite ? (pendingSprite ? 'PNG not checked yet' : 'PNG unavailable') : null, !hasKey ? 'no keyframe at this frame' : null].filter(Boolean);
     el.className = 'skin-signal ' + (issues.some(v => v !== 'PNG not checked yet') ? 'missing' : issues.length ? 'pending' : 'ready');
     el.textContent = issues.length ? (issues.every(v => v === 'PNG not checked yet') ? '◷ ' : '⚠ ') + issues.join(' · ') : '✓ ' + c.name + ' ready';
-    help.textContent = issues.length ? `${c.name}: ${issues.join(' · ')}. Use Repair part in the inspector.` : `${c.name} · ${path} · visible at frame ${st.frame}`;
+    help.textContent = issues.length ? `${c.name}: ${issues.join(' · ')}. Use Repair part; right-drag to pan.` : `${c.name} · ${path} · frame ${st.frame} · right-drag to pan`;
 }
 function itemEntries() {
     const files = [...(window.__TDE_ASSETS || new Set()), ...st.overrides.keys()];
@@ -743,7 +884,7 @@ function renderTimeline() {
     const sym = symbol();
     $('#symbols').innerHTML = c.symbols.map((s, i) => `<option value="${i}" ${st.selected.symbol === i ? 'selected' : ''}>${s.main ? '★ ' : ''}${esc(s.name)} · ${s.children.length} layers / ${s.frames}f</option>`).join('');
     if (!sym) {
-        body.innerHTML = '<div class="timeline-empty">No symbol found. Create a symbol in the inspector.</div>';
+        body.innerHTML = '<div class="timeline-empty">No pose found. Create a pose in the inspector.</div>';
         return;
     }
     const max = Math.max(1, Math.min(500, sym.frames));
@@ -765,7 +906,7 @@ function renderTimeline() {
             return `<div class="tick frame-cell ${f % interval === 0 ? 'major' : ''} ${f === st.frame ? 'playhead' : ''} ${spanClass}" data-layerframe="${i}:${f}" title="${esc(c.name)} · Frame ${f}${span ? ' · ' + (span.tween ? 'Tween' : 'Hold') + ' (' + span.start + '–' + span.end + ')' : ''}">${keys.has(f) ? `<span class="key ${st.selected.layer === i && st.frame === f ? 'selected' : ''}" title="Keyframe ${f} · Drag horizontally to move"></span>` : ''}${span?.tween && f === span.end - 1 && f > span.start ? '<span class="span-arrow" aria-hidden="true">›</span>' : ''}</div>`;
         }).join('');
         const type = c.name.startsWith('#') ? 'LOOK' : subSymbol >= 0 ? 'ANIM' : 'SPRITE';
-        return `<div class="time-row track-row ${st.selected.layer === i ? 'track-selected' : ''}"><div class="track-name ${st.selected.layer === i ? 'active' : ''}"><span class="track-color ${type.toLowerCase()}"></span><button data-layer="${i}" title="${esc(c.name)}" aria-label="Select track ${esc(c.name)}">${esc(c.name)}</button>${subSymbol >= 0 ? `<button class="drillbtn" data-drill="${subSymbol}" title="Open symbol: ${esc(c.name)}">↗</button>` : ''}</div>${frames}</div>`;
+        return `<div class="time-row track-row ${st.selected.layer === i ? 'track-selected' : ''}"><div class="track-name ${st.selected.layer === i ? 'active' : ''}"><span class="track-color ${type.toLowerCase()}"></span><button data-layer="${i}" title="${esc(c.name)}" aria-label="Select track ${esc(c.name)}">${esc(c.name)}</button>${subSymbol >= 0 ? `<button class="drillbtn" data-drill="${subSymbol}" title="Open pose: ${esc(c.name)}">↗</button>` : ''}</div>${frames}</div>`;
     }).join('');
     const left = body.scrollLeft, top = body.scrollTop;
     body.innerHTML = `<div class="timelinetable">${header}${tracks}<div class="timeline-playhead" id="timelinePlayhead" aria-hidden="true"><div class="timeline-playhead-head"></div></div></div>`;
@@ -798,23 +939,23 @@ function renderInspector() {
       ${field('Animation / effect name', 'docname', name ?? '')}
       ${st.tab === 'fx' ? numeric('Effect ID', 'fxId', d.fx[st.selected.fx]?.id ?? 0) : ''}
       ${st.tab === 'fx' ? `<div class="field-row">${field('Orientable (0/1)', 'fxOrientable', d.fx[st.selected.fx]?.orientable ? 1 : 0)}${field('Stretchable (0/1)', 'fxStretchable', d.fx[st.selected.fx]?.stretchable ? 1 : 0)}</div>${d.fx[st.selected.fx]?.stretchable ? `<div class="field-row">${numeric('Stretch offset', 'fxStretchOffset', d.fx[st.selected.fx]?.stretchOffset)}${numeric('Stretch width', 'fxWidth', d.fx[st.selected.fx]?.width)}</div>` : ''}` : ''}<div class="controlstack"><button class="btn small" data-action="newAnim">${ico('plus')} New animation</button>
-      <button class="btn small quiet" data-action="newSymbol">${ico('layers')} Symbol</button></div></section>`;
+      <button class="btn small quiet" data-action="newSymbol">${ico('layers')} New Pose</button></div></section>`;
         if (c && sym) {
             h += `<section class="panel-section"><h3>CLIP & PLAYBACK <span class="badge">60 FPS · FIXED</span></h3><p class="smallnote">The game plays animations at 60 FPS. The BIN has no independent FPS field. Speed controls affect preview only.</p>
-      ${field('Symbol name', 'symbolName', sym.name)}
+      ${field('Pose name', 'symbolName', sym.name)}
       <div class="field-row">${numeric('Frame count', 'frames', sym.frames)}
       <div class="field"><label>Animation loop</label><select data-field="symbolLoop">
       <option value="1" ${sym.loop ? 'selected' : ''}>Yes</option><option value="0" ${!sym.loop ? 'selected' : ''}>No</option></select></div></div>
       ${field('Image source (folder)', 'source', c.source ?? dc.source)}
       <p class="smallnote">@file.png is relative to the source folder. @+file.png uses tfmadv/anim/.</p>
       <div class="controlstack"><button class="btn small quiet" data-action="labelEdit">${ico('plus')} Label</button>
-      <button class="btn small quiet" data-action="renameSymbol">${ico('copy')} Clone symbol</button></div></section>`;
+      <button class="btn small quiet" data-action="renameSymbol">${ico('copy')} Duplicate Pose</button></div></section>`;
             if (ly) {
                 const x = interp(ly, st.frame), seq = x?.sequence, vals = x?.values;
                 const pv = (code) => vals?.get(code) ?? (code === 30 || code === 31 || code === 40 ? 1 : code === 41 ? 0xffffff : 0);
                 const hasLook = ly.name.startsWith('#');
                 h += `<section class="panel-section"><h3>LAYER · ${st.selected.layer + 1} / ${sym.children.length} <span class="badge">${hasLook ? '# slot' : 'sprite'}</span></h3>
-        ${field('Part / symbol', 'layerName', ly.name)}
+        ${field('Part / pose', 'layerName', ly.name)}
         ${hasLook ? (() => { const info = slotInfo(ly.name); return `<div class="slot-check ${info.piece && (info.hasSprite || info.pendingSprite) ? 'valid' : 'invalid'}"><strong>${info.piece && info.hasSprite ? '✓ Valid references' : info.piece && info.pendingSprite ? '◷ Checking remote image' : '⚠ Incomplete part'}</strong><span>Look ${info.skin?.key ?? '—'} · slot ${info.piece ? '✓' : '✕'} · sprite PNG ${info.hasSprite ? '✓' : info.pendingSprite ? '…' : '✕'} · keyframe ${interp(ly, st.frame) ? '✓' : '✕'}</span><small>${esc(info.path ?? 'No look selected')}</small></div><div class="controlstack"><button class="btn small primary" data-action="partRepair">${ico('settings')} Repair part</button><button class="btn small" data-action="partWizard">${ico('plus')} Add another part</button><button class="btn small" data-action="editSelectedLook">${ico('shirt')} Edit Look</button></div>${info.piece ? `<div class="field-row">${numeric('Skin pivot X', 'lookPivotX', info.piece.x)}${numeric('Skin pivot Y', 'lookPivotY', info.piece.y)}</div>` : ''}`; })() : ''}
         <div class="controlstack"><button class="btn small" data-action="uploadSprite">${ico('image')} Add PNG</button>
         <button class="btn small quiet" data-action="layerCopy">${ico('copy')} Duplicate</button>
@@ -1244,8 +1385,10 @@ function tick(_delta) {
 function setupCanvas() {
     const cv = canvasApp.view;
     cv.addEventListener('wheel', e => { e.preventDefault(); const rect = cv.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top; setZoom(st.zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12), [x, y]); }, { passive: false });
-    cv.addEventListener('pointerdown', e => { if (e.button !== 0 && e.button !== 1)
-        return; const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top; const [wx, wy] = worldXY(x, y); const s = symbol(); let target = -1, best = 999999; if (s && e.button === 0) {
+    cv.addEventListener('pointerdown', e => { if (e.button !== 0 && e.button !== 1 && e.button !== 2)
+        return; if (canvasDragPointerId !== null)
+        return; if (e.button === 2)
+        e.preventDefault(); const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top; const [wx, wy] = worldXY(x, y); const s = symbol(); let target = -1, best = 999999; if (s && e.button === 0) {
         for (let i = s.children.length - 1; i >= 0; i--) {
             const sprite = contentLayer.children.find((c) => c.name === `editor-layer-${i}`);
             if (!sprite)
@@ -1281,8 +1424,8 @@ function setupCanvas() {
         drag = { startX: wx, startY: wy, startV: st.mode === 'pivot' ? (lookPiece?.x ?? ch?.anchor?.[0] ?? 0) : startX, startP: st.mode === 'pivot' ? (lookPiece?.y ?? ch?.anchor?.[1] ?? 0) : startY, changed: false, mode: st.mode, child: target };
     }
     else
-        drag = { startX: x, startY: y, startV: st.panX, startP: st.panY, changed: false, mode: 'pan', child: -1 }; cv.setPointerCapture(e.pointerId); renderRequested = true; });
-    cv.addEventListener('pointermove', e => { if (!drag)
+        drag = { startX: x, startY: y, startV: st.panX, startP: st.panY, changed: false, mode: 'pan', child: -1 }; canvasDragPointerId = e.pointerId; cv.setPointerCapture(e.pointerId); cv.style.cursor = drag?.mode === 'pan' ? 'grabbing' : ''; renderRequested = true; });
+    cv.addEventListener('pointermove', e => { if (!drag || canvasDragPointerId !== e.pointerId)
         return; const r = cv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top; const change = drag.mode === 'pan' ? Math.abs(x - drag.startX) + Math.abs(y - drag.startY) : 0; if (drag.mode === 'pan') {
         st.panX = drag.startV + x - drag.startX;
         st.panY = drag.startP + y - drag.startY;
@@ -1311,12 +1454,21 @@ function setupCanvas() {
             setProp(sq, 11, Math.round((drag.startP + dy) * 1000) / 1000);
         }
     } renderRequested = true; });
-    cv.addEventListener('pointerup', () => { if (drag?.changed) {
+    const endCanvasDrag = (e) => { if (canvasDragPointerId !== e.pointerId)
+        return; if (drag?.changed) {
         st.dirty = true;
         renderInspector();
         renderTimeline();
         saveDraft();
-    } drag = null; });
+    } drag = null; canvasDragPointerId = null; cv.style.cursor = ''; if (cv.hasPointerCapture(e.pointerId))
+        cv.releasePointerCapture(e.pointerId); };
+    cv.addEventListener('pointerup', endCanvasDrag);
+    cv.addEventListener('pointercancel', endCanvasDrag);
+    cv.addEventListener('lostpointercapture', e => { if (canvasDragPointerId === e.pointerId) {
+        drag = null;
+        canvasDragPointerId = null;
+        cv.style.cursor = '';
+    } });
     cv.addEventListener('contextmenu', e => e.preventDefault());
 }
 async function openFile(file) { try {
@@ -1790,7 +1942,7 @@ function suggestPartName(sym, look = defaultSkin()) {
 async function partWizard(preset) {
     let sym = symbol();
     if (!sym) {
-        notify('Open an animation and a symbol before adding a part', true);
+        notify('Open an animation and a pose before adding a part', true);
         return;
     }
     if (!sym.children.some(c => c.name.startsWith('#'))) {
@@ -1860,30 +2012,6 @@ async function partRepair() {
     }
     else
         notify('Slot and keyframe references verified. Adjust the pivot in the inspector.');
-}
-function layerAdd() {
-    const s = symbol();
-    if (!s) {
-        notify('Open a symbol before adding a part', true);
-        return;
-    }
-    void modalText('Add layer / part', 'Use #name for a Look part (auto-registers a slot), @name.png for a sprite or an existing symbol name.', '@new_sprite.png').then(name => {
-        if (!name)
-            return;
-        const n = name.trim();
-        if (!n)
-            return;
-        if (n.startsWith('#')) {
-            void partWizard(n);
-            return;
-        }
-        if (!/^@?[a-zA-Z0-9_./+-]{1,90}$/.test(n) || n.includes('..')) {
-            reportIssue('Invalid layer name', new Error('Use a valid sprite or symbol name.'));
-            return;
-        }
-        mutate(() => { if (s.children.some(x => x.name === n))
-            throw Error('Layer already exists'); s.children.push({ name: n, anchor: null, sequences: [defaults(0, Math.max(1, s.frames))] }); st.selected.layer = s.children.length - 1; }, { structural: true });
-    }).catch(e => reportIssue('Add layer failed', e));
 }
 function keyAdd() { if (!child())
     return; mutate(() => { const c = child(), x = interp(c, st.frame); if (x?.sequence.start === st.frame)
@@ -2019,10 +2147,152 @@ async function autoPivots(index) {
         } }, { structural: true });
     notify(`Pivots calculated: ${changes.length} · images missing: ${skipped}. Centered on visible artwork; manually refine to match joints.`, !changes.length);
 }
-async function newSymbol() { const c = activeClip(); if (!c)
-    return; const name = await modalText('New symbol', 'Symbol / subclip name to reference from layers.', 'new_symbol'); if (!name)
-    return; mutate(() => { if (c.symbols.some(s => s.name === name))
-    throw Error('Duplicate symbol'); c.symbols.push({ main: false, name, frames: frameCount(), loop: true, labels: [], children: [] }); st.selected.symbol = c.symbols.length - 1; st.selected.layer = -1; st.frame = 0; }, { structural: true }); }
+/** Creation wizard: no data is touched until confirmation. All options use the
+ * existing ClipAnim/SymbolClip representation and participate in Undo/Redo. */
+async function newSymbol() {
+    const clip = activeClip();
+    if (!clip) {
+        notify('Select an animation before creating a pose.', true);
+        return;
+    }
+    const sources = getStaticPoseSources(st.tab === 'monsters' ? st.data?.monsters[st.selected.monster] : null);
+    const current = symbol();
+    const defaultPreset = sources.length ? 'static' : 'empty';
+    const d = $('#modal');
+    d.classList.remove('hidden');
+    const options = [
+        { id: 'empty', title: 'Empty Pose', description: 'Start with no layers. Build the pose from scratch.' },
+        { id: 'static', title: 'From statique', description: 'Copy the static skeleton, layer order, first-frame transforms and required nested poses.' },
+        { id: 'duplicate', title: 'Duplicate current', description: 'Copy this pose with all its keyframes and layers.' }
+    ];
+    d.innerHTML = `<div class="dialog pose-dialog" role="dialog" aria-modal="true" aria-labelledby="pose-title">
+    <div class="wizard-eyebrow">ANIMATION · POSE BUILDER</div><h2 id="pose-title">Create new Pose</h2>
+    <p>Choose a starting point. Presets are independent editable copies; your original animation is not modified.</p>
+    <div class="pose-form-grid"><div class="field"><label for="newPoseName">Pose name</label><input id="newPoseName" autocomplete="off" spellcheck="false" value="${esc(suggestPoseName(clip))}"/></div>
+    <div class="field"><label for="newPoseFrames">Length (frames · 60 FPS)</label><input id="newPoseFrames" type="number" min="1" max="65535" step="1" value="${current?.frames ?? 60}"/></div></div>
+    <div class="pose-preset-label">STARTING TEMPLATE</div>
+    <div class="pose-preset-grid" role="radiogroup" aria-label="Pose preset">${options.map(o => `<label class="pose-preset ${defaultPreset === o.id ? 'chosen' : ''} ${o.id === 'static' && !sources.length ? 'unavailable' : ''}"><input type="radio" name="newPosePreset" value="${o.id}" ${defaultPreset === o.id ? 'checked' : ''} ${o.id === 'static' && !sources.length || o.id === 'duplicate' && !current ? 'disabled' : ''}/><span class="pose-preset-title">${esc(o.title)}</span><small>${esc(o.description)}</small></label>`).join('')}</div>
+    <div class="field" id="staticSourceRow"><label for="poseStaticSource">Source static animation</label><select id="poseStaticSource">${sources.map((x, i) => `<option value="${i}">${esc(x.label)}</option>`).join('')}</select><p class="smallnote">Uses only the selected creature's statique animations. Missing sub-poses are copied into this animation automatically.</p></div>
+    <label class="pose-attach"><input type="checkbox" id="poseAttach" ${current ? 'checked' : 'disabled'} /> <span><strong>Insert Pose as a layer</strong><small>Adds a reference to the currently open pose so the new pose is visible in the parent animation.</small></span></label>
+    <div class="pose-error" id="poseError" role="alert" aria-live="polite"></div>
+    <div class="dialogbuttons"><button class="btn" id="poseCancel" type="button">Cancel</button><button class="btn primary" id="poseConfirm" type="button">${ico('plus')} Create Pose</button></div></div>`;
+    const getPreset = () => ($('input[name="newPosePreset"]:checked')?.value || 'empty');
+    const update = () => { $('#staticSourceRow').classList.toggle('hidden', getPreset() !== 'static'); d.querySelectorAll('.pose-preset').forEach(el => el.classList.toggle('chosen', !!el.querySelector('input:checked'))); };
+    d.querySelectorAll('input[name="newPosePreset"]').forEach(el => el.addEventListener('change', update));
+    update();
+    const finish = () => { d.classList.add('hidden'); d.innerHTML = ''; };
+    $('#poseCancel').onclick = finish;
+    const nameField = $('#newPoseName');
+    nameField.focus();
+    nameField.select();
+    $('#poseConfirm').onclick = () => {
+        const preset = getPreset(), name = nameField.value.trim(), frames = Number($('#newPoseFrames').value);
+        const parent = st.selected.symbol, link = $('#poseAttach').checked;
+        const err = $('#poseError');
+        try {
+            const fresh = activeClip();
+            if (!fresh)
+                throw Error('Animation has changed. Reopen the dialog.');
+            validatePoseName(name, fresh);
+            if (!Number.isInteger(frames) || frames < 1 || frames > 65535)
+                throw Error('Length must be between 1 and 65535 frames.');
+        }
+        catch (e) {
+            err.textContent = e.message;
+            return;
+        }
+        let newIndex = -1;
+        const ok = mutate(() => {
+            // Resolve live references during each attempt: a failed mutation restores
+            // the BIN by deserializing it, invalidating references held by the dialog.
+            const fresh = activeClip();
+            const liveSources = getStaticPoseSources(st.tab === 'monsters' ? st.data?.monsters[st.selected.monster] : null);
+            const liveSource = liveSources[Number($('#poseStaticSource').value)];
+            newIndex = addPose(fresh, { name, frames, preset, source: liveSource, current: fresh.symbols[parent], attachTo: link ? parent : null });
+            st.selected.symbol = newIndex;
+            st.selected.layer = -1;
+            st.frame = 0;
+            st.playing = false;
+        }, { structural: true });
+        if (ok) {
+            if (link)
+                symbolTrail.push(parent);
+            finish();
+            notify(`Pose “${name}” created (${preset === 'static' ? 'statique preset' : preset === 'duplicate' ? 'duplicate' : 'empty'}).`);
+        }
+        else {
+            const e = $('#poseError');
+            if (e)
+                e.textContent = 'Pose was not created. Check the name, duration and Issues panel.';
+        }
+    };
+}
+/** A layer is either an image, a #Look slot, or a reference to another Pose.
+ * The picker makes these three concepts explicit instead of relying on prefixes. */
+async function layerAdd() {
+    const sym = symbol(), clip = activeClip();
+    if (!sym || !clip) {
+        notify('Select a pose before adding a layer.', true);
+        return;
+    }
+    const d = $('#modal');
+    d.classList.remove('hidden');
+    const eligible = clip.symbols.map((s, i) => ({ s, i })).filter(({ i, s }) => i !== st.selected.symbol && !wouldCreatePoseCycle(clip, st.selected.symbol, s.name));
+    d.innerHTML = `<div class="dialog pose-dialog" role="dialog" aria-modal="true" aria-labelledby="layer-dialog-title">
+    <div class="wizard-eyebrow">ANIMATION · LAYER BUILDER</div><h2 id="layer-dialog-title">Add Layer</h2><p>Select what this layer should display.</p>
+    <div class="pose-preset-grid layer-kind-grid" role="radiogroup" aria-label="Layer type">
+    <label class="pose-preset chosen"><input type="radio" name="layerKind" value="part" checked/><span class="pose-preset-title">Part · #</span><small>Look / fur / equipment slot</small></label>
+    <label class="pose-preset"><input type="radio" name="layerKind" value="pose"/><span class="pose-preset-title">Pose</span><small>Existing nested animation</small></label>
+    <label class="pose-preset"><input type="radio" name="layerKind" value="sprite"/><span class="pose-preset-title">Image</span><small>PNG from game assets</small></label></div>
+    <div class="field" id="layerPoseRow"><label for="layerPoseSelect">Existing Pose</label><select id="layerPoseSelect">${eligible.map(({ s }) => `<option value="${esc(s.name)}">${esc(s.name)} · ${s.children.length} layers</option>`).join('')}</select><p class="smallnote">Only poses without circular references are available.</p><button id="layerNewPose" class="btn small" type="button">${ico('plus')} Create new Pose instead</button></div>
+    <div class="field" id="layerSpriteRow"><label for="layerSpriteName">Image file</label><input id="layerSpriteName" value="@new_sprite.png" autocomplete="off"/><p class="smallnote">Prefix @filename.png references the animation's image folder; @+filename.png uses tfmadv/anim/.</p></div>
+    <div class="pose-error" id="layerError" role="alert" aria-live="polite"></div>
+    <div class="dialogbuttons"><button class="btn" type="button" id="layerCancel">Cancel</button><button class="btn primary" type="button" id="layerConfirm">Continue</button></div></div>`;
+    const kind = () => ($('input[name="layerKind"]:checked')?.value ?? 'part');
+    const update = () => {
+        $('#layerPoseRow').classList.toggle('hidden', kind() !== 'pose');
+        $('#layerSpriteRow').classList.toggle('hidden', kind() !== 'sprite');
+        d.querySelectorAll('.pose-preset').forEach(el => el.classList.toggle('chosen', !!el.querySelector('input:checked')));
+        $('#layerConfirm').textContent = kind() === 'part' ? 'Choose Part Name' : 'Add Layer';
+        ($('#layerConfirm')).disabled = kind() === 'pose' && !eligible.length;
+    };
+    d.querySelectorAll('input[name="layerKind"]').forEach(el => el.addEventListener('change', update));
+    update();
+    const finish = () => { d.classList.add('hidden'); d.innerHTML = ''; };
+    $('#layerCancel').onclick = finish;
+    $('#layerNewPose').onclick = () => { finish(); void newSymbol(); };
+    $('#layerConfirm').onclick = () => {
+        if (kind() === 'part') {
+            finish();
+            void partWizard();
+            return;
+        }
+        let name = kind() === 'pose' ? $('#layerPoseSelect').value : $('#layerSpriteName').value.trim();
+        if (kind() === 'sprite' && !name.startsWith('@'))
+            name = '@' + name;
+        const err = $('#layerError');
+        if (kind() === 'sprite' && (!/^@\+?[\w.\/-]+\.png$/i.test(name) || name.includes('..'))) {
+            err.textContent = 'Enter a safe PNG filename (for example @head.png).';
+            return;
+        }
+        if (kind() === 'pose' && (!clip.symbols.some(s => s.name === name) || wouldCreatePoseCycle(clip, st.selected.symbol, name))) {
+            err.textContent = 'Invalid Pose or recursive Pose reference.';
+            return;
+        }
+        const ok = mutate(() => {
+            // Layers may intentionally use the same sprite several times for effects.
+            const live = symbol();
+            if (!live)
+                throw Error('Parent pose has changed. Reopen the dialog.');
+            live.children.push({ name, anchor: null, sequences: [defaults(0, live.frames)] });
+            st.selected.layer = live.children.length - 1;
+        }, { structural: true });
+        if (ok)
+            finish();
+        else
+            err.textContent = 'Unable to add layer. Check Issues for details.';
+    };
+}
 function layerReorder(dir) { const s = symbol(), i = st.selected.layer; if (!s || i < 0 || i + dir < 0 || i + dir >= s.children.length)
     return; mutate(() => { const [x] = s.children.splice(i, 1); s.children.splice(i + dir, 0, x); st.selected.layer = i + dir; }, { structural: true }); }
 let uploadTarget = null;
@@ -2343,7 +2613,7 @@ async function handleAction(action, index) { const d = st.data; switch (action) 
         downloadIssues();
         break;
 } }
-function showHelp() { const m = $('#modal'); m.classList.remove('hidden'); m.innerHTML = `<div class="dialog"><h2>Transformice Data Editor · Help</h2><p>Offline-first editor for the real TFMA <code>data.bin</code> format. Changes remain local until exported.</p><p><kbd>Space</kbd> Play · <kbd>←</kbd> <kbd>→</kbd> Step frames · <kbd>K</kbd> Keyframe · <kbd>Del</kbd> Delete key · <kbd>Ctrl+Z</kbd> Undo · <kbd>Ctrl+Y</kbd> Redo · <kbd>Ctrl+O</kbd> Open · <kbd>Ctrl+S</kbd> Export · <kbd>P</kbd> Pivot tool · <kbd>G</kbd> Grid</p><p>Drag sprites to adjust positions and pivots. Layer order is preserved; <code>#name</code> slots use the selected Look. New images must be distributed alongside the BIN.</p><div class="controlstack"><button class="btn" data-action="imagePNG">${ico('image')} PNG snapshot</button><button class="btn" data-action="exportSprites">${ico('download')} Export sprites/sounds ZIP</button><button class="btn" data-action="assetURL">${ico('upload')} Asset source URL</button></div><div class="hint warn">Note: new slots and skins only work in-game if the runtime and asset files recognize them. The preview uses PixiJS, not the game runtime.</div><div class="dialogbuttons"><button class="btn primary" data-action="closeModal">Close</button></div></div>`; }
+function showHelp() { const m = $('#modal'); m.classList.remove('hidden'); m.innerHTML = `<div class="dialog"><h2>Transformice Data Editor · Help</h2><p>Offline-first editor for the real TFMA <code>data.bin</code> format. Changes remain local until exported.</p><p><kbd>Space</kbd> Play · <kbd>←</kbd> <kbd>→</kbd> Step frames · <kbd>K</kbd> Keyframe · <kbd>Del</kbd> Delete key · <kbd>Ctrl+Z</kbd> Undo · <kbd>Ctrl+Y</kbd> Redo · <kbd>Ctrl+O</kbd> Open · <kbd>Ctrl+S</kbd> Export · <kbd>P</kbd> Pivot tool · <kbd>G</kbd> Grid</p><p>Create an empty Pose or preset from <code>statique</code> using New Pose. New Layer lets you choose between a Part, a nested Pose and a PNG. Left-drag sprites to adjust positions and pivots. Right-drag the canvas to pan the camera without editing. Layer order is preserved; <code>#name</code> slots use the selected Look. New images must be distributed alongside the BIN.</p><div class="controlstack"><button class="btn" data-action="imagePNG">${ico('image')} PNG snapshot</button><button class="btn" data-action="exportSprites">${ico('download')} Export sprites/sounds ZIP</button><button class="btn" data-action="assetURL">${ico('upload')} Asset source URL</button></div><div class="hint warn">Note: new slots and skins only work in-game if the runtime and asset files recognize them. The preview uses PixiJS, not the game runtime.</div><div class="dialogbuttons"><button class="btn primary" data-action="closeModal">Close</button></div></div>`; }
 function applyField(key, raw) {
     const d = st.data;
     if (!d)
