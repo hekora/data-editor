@@ -1,4 +1,13 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="theme-color" content="#1c2024"/><title>Transformice Data Editor</title><link rel="icon" type="image/svg+xml" href="./favicon.svg"/><link rel="stylesheet" href="./styles.css"/><link rel="stylesheet" href="./studio-v2.css"/><link rel="stylesheet" href="./studio-v3.css"/></head><body><div id="app"></div><script src="./vendor/pixi.js"></script><script src="./vendor/pako.min.js"></script><script src="./vendor/howler.js"></script><script>
+<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="theme-color" content="#1c2024"/><title>Transformice Data Editor</title><link rel="icon" type="image/svg+xml" href="./favicon.svg"/><link rel="stylesheet" href="./styles.css"/><link rel="stylesheet" href="./studio-v2.css"/><link rel="stylesheet" href="./studio-v161.css?v=162"/><style id="tde-dock-safety">
+.app{position:relative}
+.app>.top{grid-row:1;grid-column:1/-1}
+.app>.library{grid-row:2;grid-column:1;min-width:0}
+.app>.workspace{grid-row:2;grid-column:2;min-width:0;position:relative}
+.app>.inspector{grid-row:2;grid-column:3;min-width:0}
+.app>.dock-split,.workspace>.timeline-split,.timeline>.track-split{position:absolute}
+@media(max-width:1050px){.app>.workspace{grid-row:2;grid-column:2}.app>.inspector{grid-row:auto;grid-column:auto}}
+@media(max-width:700px){.app>.library{grid-row:auto;grid-column:auto}.app>.workspace{grid-row:2;grid-column:1}}
+</style><link rel="stylesheet" href="./studio-v162.css?v=162"/></head><body><div id="app"></div><script src="./vendor/pixi.js"></script><script src="./vendor/pako.min.js"></script><script src="./vendor/howler.js"></script><script>
 const te = new TextEncoder(), td = new TextDecoder('utf-8', { fatal: true });
 class Reader {
     buf;
@@ -246,6 +255,73 @@ function interp(child, frame) { let i = -1; for (let j = child.sequences.length 
     }
 } return { sequence: s, index: i, values: v }; }
 
+/**
+ * Reposition one exact keyframe on its own layer.
+ * A sequence is [start, end), not a point: moving its start requires rebuilding
+ * the neighbouring visible intervals, while keeping its animation properties,
+ * tween mode and Bézier curve attached to the moved keyframe.
+ *
+ * The operation is intentionally transactional: it builds a working copy first
+ * and only installs it when every interval is valid. Blank spans remain blank
+ * unless they were directly covered by an adjacent sequence at the source.
+ */
+function moveKeyframe(child, from, to, frames) {
+    if (!Number.isInteger(frames) || frames < 1 || frames > 65535 || !Number.isInteger(from) || !Number.isInteger(to) || to < 0 || to >= frames)
+        return { ok: false, reason: 'Target frame is outside the symbol' };
+    if (to === from)
+        return { ok: false, reason: 'Keyframe has not moved' };
+    const working = child.sequences.map(s => ({ ...s, props: s.props.map(p => ({ ...p })), bezier: s.bezier ? [...s.bezier] : null }));
+    working.sort((a, b) => a.start - b.start);
+    for (const s of working) {
+        if (s.start < 0 || s.end > frames || s.end <= s.start)
+            return { ok: false, reason: 'A keyframe has an invalid interval' };
+    }
+    const source = working.findIndex(s => s.start === from);
+    if (source < 0)
+        return { ok: false, reason: 'Source keyframe no longer exists' };
+    if (working.some(s => s.start === to))
+        return { ok: false, reason: `Frame ${to} already contains a keyframe` };
+    // Some original game clips intentionally contain overlapping intervals.
+    // Do not silently rewrite their neighbours: use a conservative local shift
+    // while preserving both their start order and the source's original duration.
+    if (working.some((s, i) => i > 0 && working[i - 1].end > s.start)) {
+        const left = working[source - 1], right = working[source + 1];
+        const moving = working[source];
+        const end = moving.end + to - from;
+        if ((left && to <= left.start) || (right && to >= right.start) || end > frames || end <= to)
+            return { ok: false, reason: 'Overlapping original keyframes: move within the neighbouring keys only' };
+        moving.start = to;
+        moving.end = end;
+        child.sequences = working;
+        return { ok: true, reason: `Keyframe moved from ${from} to ${to} (original overlaps preserved)` };
+    }
+    const [moving] = working.splice(source, 1);
+    const previous = working[source - 1];
+    // Close the old occupied span ONLY when it was contiguous with its neighbour.
+    if (previous?.end === moving.start)
+        previous.end = moving.end;
+    const occupied = working.find(s => s.start < to && to < s.end);
+    const nextStart = working.filter(s => s.start > to).reduce((v, s) => Math.min(v, s.start), frames);
+    const duration = moving.end - moving.start;
+    if (occupied) {
+        const oldEnd = occupied.end;
+        occupied.end = to;
+        moving.end = oldEnd;
+    }
+    else {
+        moving.end = Math.min(nextStart, frames, to + duration);
+    }
+    moving.start = to;
+    if (moving.end <= moving.start)
+        return { ok: false, reason: 'Not enough free frames at the destination' };
+    working.push(moving);
+    working.sort((a, b) => a.start - b.start);
+    if (working.some((s, i) => s.start < 0 || s.end > frames || s.end <= s.start || i > 0 && working[i - 1].end > s.start))
+        return { ok: false, reason: 'Move would create overlapping intervals' };
+    child.sequences = working;
+    return { ok: true, reason: `Keyframe moved from ${from} to ${to}` };
+}
+
 const $ = (sel) => document.querySelector(sel);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const deep = (v) => structuredClone(v);
@@ -324,7 +400,7 @@ function showIssues() {
     <div class="issue-list">${issueHistory.length ? issueHistory.map(x => `<div class="issue-item"><small>${esc(x.time)} · ${esc(x.area)}</small><div>${esc(x.message)}</div></div>`).join('') : '<p>No errors were recorded in this session.</p>'}</div>
     <div class="dialogbuttons"><button class="btn" data-action="downloadIssues">Download diagnostics</button><button class="btn primary" data-action="closeModal">Close</button></div></div>`;
 }
-function downloadIssues() { download(new Blob([JSON.stringify({ application: 'Transformice Data Editor', version: '1.6.0', issues: issueHistory }, null, 2)], { type: 'application/json' }), 'transformice-editor-diagnostics.json'); }
+function downloadIssues() { download(new Blob([JSON.stringify({ application: 'Transformice Data Editor', version: '1.6.1', issues: issueHistory }, null, 2)], { type: 'application/json' }), 'transformice-editor-diagnostics.json'); }
 function notify(t, bad = false) { const e = $('#notice'); e.textContent = t; e.className = 'notice' + (bad ? ' error' : ''); clearTimeout(toastTimeout); toastTimeout = window.setTimeout(() => e.classList.add('hidden'), 3800); }
 function modalText(title, message, initial = '', textarea = false) { return new Promise(res => { const d = $('#modal'); d.classList.remove('hidden'); d.innerHTML = `<div class="dialog"><h2>${esc(title)}</h2><p>${esc(message)}</p>${textarea ? `<textarea id="modalInput">${esc(initial)}</textarea>` : `<input id="modalInput" class="search" value="${esc(initial)}"/>`}<div class="dialogbuttons"><button class="btn" id="cancel">Cancel</button><button class="btn primary" id="confirm">Confirm</button></div></div>`; const input = $('#modalInput'); input.focus(); input.select(); function end(v) { d.classList.add('hidden'); d.innerHTML = ''; res(v); } $('#cancel').onclick = () => end(null); $('#confirm').onclick = () => end(input.value); input.onkeydown = (e) => { if (e.key === 'Escape')
     end(null); if (e.key === 'Enter' && !textarea) {
@@ -585,7 +661,7 @@ function renderTimeline() { const c = activeClip(); if (!c) {
     return;
 } const max = Math.max(1, Math.min(500, sym.frames)); const count = $('#layerCount'); if (count)
     count.textContent = `· ${sym.children.length} layers`; const foot = $('#timelineFoot'); if (foot)
-    foot.textContent = `${esc(sym.name)} · ${sym.children.length} layers · ${sym.frames} frames · Click a diamond to edit; double-click a symbol name to enter it.`; const header = `<div class="time-row"><div class="track-name"><span class="eyebrow">LAYERS · ${sym.children.length}</span></div>${Array.from({ length: max }, (_, f) => `<div class="tick ${f % 10 === 0 ? 'ten' : ''} ${f === st.frame ? 'playhead' : ''}" data-frame="${f}" title="Frame ${f}">${f % 10 === 0 ? f : ''}${sym.labels.some(l => l.frame === f) ? '<span class="label-chip">▾</span>' : ''}</div>`).join('')}</div>`; const tracks = sym.children.map((c, i) => { const seqStart = new Map(c.sequences.map(v => [v.start, v])); const subSymbol = c.name === sym.name ? -1 : activeClip()?.symbols.findIndex(v => v.name === c.name) ?? -1; const cells = Array.from({ length: max }, (_, f) => { const span = c.sequences.find(v => f >= v.start && f < v.end); const spanClass = span ? `occupied ${span.tween ? 'tween-run' : 'hold-run'} ${f === span.start ? 'span-start' : ''} ${f === span.end - 1 ? 'span-end' : ''}` : ''; return `<div class="tick ${f % 10 === 0 ? 'ten' : ''} ${f === st.frame ? 'playhead' : ''} ${spanClass}" data-layerframe="${i}:${f}" title="${esc(c.name)} · Frame ${f}${span ? ' · ' + (span.tween ? 'Tween' : 'Hold') + ' (' + span.start + '–' + span.end + ')' : ''}">${seqStart.has(f) ? `<span class="key ${st.selected.layer === i && st.frame === f ? 'selected' : ''}"></span>` : ''}${span?.tween && f === span.end - 1 && f > span.start ? '<span class="span-arrow" aria-hidden="true">›</span>' : ''}</div>`; }).join(''); return `<div class="time-row"><div class="track-name ${st.selected.layer === i ? 'active' : ''}"><span class="circle" style="background:${c.name.startsWith('#') ? '#dfbd73' : '#b197eb'}"></span><button data-layer="${i}" title="${esc(c.name)}">${esc(c.name)}</button>${subSymbol >= 0 ? `<button class="drillbtn" data-drill="${subSymbol}" title="Open symbol: ${esc(c.name)}">↗</button>` : ''}</div>${cells}</div>`; }).join(''); const old = $('#timeline'), scrollLeft = old.scrollLeft, scrollTop = old.scrollTop; old.innerHTML = `<div class="timelinetable">${header}${tracks}</div>`; old.scrollLeft = scrollLeft; old.scrollTop = scrollTop; indexTimeline(); }
+    foot.textContent = `${esc(sym.name)} · ${sym.children.length} layers · ${sym.frames} frames · Drag a diamond left or right to move its keyframe · Double-click a symbol name to enter it.`; const header = `<div class="time-row"><div class="track-name"><span class="eyebrow">LAYERS · ${sym.children.length}</span></div>${Array.from({ length: max }, (_, f) => `<div class="tick ${f % 10 === 0 ? 'ten' : ''} ${f === st.frame ? 'playhead' : ''}" data-frame="${f}" title="Frame ${f}">${f % 10 === 0 ? f : ''}${sym.labels.some(l => l.frame === f) ? '<span class="label-chip">▾</span>' : ''}</div>`).join('')}</div>`; const tracks = sym.children.map((c, i) => { const seqStart = new Map(c.sequences.map(v => [v.start, v])); const subSymbol = c.name === sym.name ? -1 : activeClip()?.symbols.findIndex(v => v.name === c.name) ?? -1; const cells = Array.from({ length: max }, (_, f) => { const span = c.sequences.find(v => f >= v.start && f < v.end); const spanClass = span ? `occupied ${span.tween ? 'tween-run' : 'hold-run'} ${f === span.start ? 'span-start' : ''} ${f === span.end - 1 ? 'span-end' : ''}` : ''; return `<div class="tick ${f % 10 === 0 ? 'ten' : ''} ${f === st.frame ? 'playhead' : ''} ${spanClass}" data-layerframe="${i}:${f}" title="${esc(c.name)} · Frame ${f}${span ? ' · ' + (span.tween ? 'Tween' : 'Hold') + ' (' + span.start + '–' + span.end + ')' : ''}">${seqStart.has(f) ? `<span class="key ${st.selected.layer === i && st.frame === f ? 'selected' : ''}"></span>` : ''}${span?.tween && f === span.end - 1 && f > span.start ? '<span class="span-arrow" aria-hidden="true">›</span>' : ''}</div>`; }).join(''); return `<div class="time-row"><div class="track-name ${st.selected.layer === i ? 'active' : ''}"><span class="circle" style="background:${c.name.startsWith('#') ? '#dfbd73' : '#b197eb'}"></span><button data-layer="${i}" title="${esc(c.name)}">${esc(c.name)}</button>${subSymbol >= 0 ? `<button class="drillbtn" data-drill="${subSymbol}" title="Open symbol: ${esc(c.name)}">↗</button>` : ''}</div>${cells}</div>`; }).join(''); const old = $('#timeline'), scrollLeft = old.scrollLeft, scrollTop = old.scrollTop; old.innerHTML = `<div class="timelinetable">${header}${tracks}</div>`; old.scrollLeft = scrollLeft; old.scrollTop = scrollTop; indexTimeline(); }
 const field = (label, key, val, type = 'text', step = 'any') => `<div class="field"><label>${esc(label)}</label><input type="${type}" data-field="${key}" value="${esc(val)}" ${type === 'number' ? `step="${step}"` : ''}></div>`;
 const numeric = (label, key, v, step = '1') => field(label, key, v, 'number', step);
 function renderInspector() {
@@ -2233,6 +2309,128 @@ root.addEventListener('click', async (ev) => { const t = ev.target; const action
     setPlaying(false);
     refresh();
 } });
+let keyDrag = null;
+let suppressDragClick = false;
+function clearKeyDragVisuals() {
+    if (!keyDrag)
+        return;
+    keyDrag.source.classList.remove('key-drag-source');
+    keyDrag.target?.classList.remove('key-drop-target', 'key-drop-invalid');
+    keyDrag.preview?.remove();
+}
+root.addEventListener('click', event => {
+    if (suppressDragClick) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        suppressDragClick = false;
+    }
+}, true);
+const timelineEl = $('#timeline');
+timelineEl.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !event.isPrimary)
+        return;
+    const target = event.target;
+    const key = target.closest('.key');
+    const cell = key?.closest('[data-layerframe]');
+    if (!key || !cell || !symbol())
+        return;
+    const [layer, from] = cell.dataset.layerframe.split(':').map(Number);
+    if (!Number.isInteger(layer) || !Number.isInteger(from) || !symbol()?.children[layer]?.sequences.some(s => s.start === from))
+        return;
+    setPlaying(false);
+    keyDrag = { pointerId: event.pointerId, layer: layer, from: from, to: from, startX: event.clientX, startScroll: timelineEl.scrollLeft, cellWidth: cell.getBoundingClientRect().width || 22, started: false, source: key, target: null, preview: null };
+    event.preventDefault();
+    try {
+        timelineEl.setPointerCapture(event.pointerId);
+    }
+    catch { }
+});
+timelineEl.addEventListener('pointermove', event => {
+    const d = keyDrag;
+    if (!d || d.pointerId !== event.pointerId)
+        return;
+    if (!d.started && Math.abs(event.clientX - d.startX) < 4)
+        return;
+    if (!d.started) {
+        d.started = true;
+        d.source.classList.add('key-drag-source');
+        const hint = document.createElement('div');
+        hint.className = 'key-drag-hint';
+        hint.setAttribute('role', 'status');
+        document.body.appendChild(hint);
+        d.preview = hint;
+    }
+    const frames = frameCount();
+    d.to = clamp(d.from + Math.round((event.clientX - d.startX + timelineEl.scrollLeft - d.startScroll) / d.cellWidth), 0, frames - 1);
+    const cell = timelineEl.querySelector(`[data-layerframe="${d.layer}:${d.to}"]`);
+    if (cell !== d.target) {
+        d.target?.classList.remove('key-drop-target', 'key-drop-invalid');
+        d.target = cell;
+    }
+    const occupied = symbol()?.children[d.layer]?.sequences.some(s => s.start === d.to && s.start !== d.from);
+    if (cell) {
+        cell.classList.add('key-drop-target');
+        cell.classList.toggle('key-drop-invalid', !!occupied);
+    }
+    if (d.preview) {
+        d.preview.textContent = occupied ? `Frame ${d.to} already has a key` : `Frame ${d.from} → ${d.to}`;
+        d.preview.style.left = `${clamp(event.clientX + 14, 8, window.innerWidth - 195)}px`;
+        d.preview.style.top = `${clamp(event.clientY - 37, 8, window.innerHeight - 48)}px`;
+        d.preview.classList.toggle('invalid', !!occupied);
+    }
+    event.preventDefault();
+});
+function finishKeyDrag(event, cancel = false) {
+    const d = keyDrag;
+    if (!d || d.pointerId !== event.pointerId)
+        return;
+    const hasMoved = d.started;
+    clearKeyDragVisuals();
+    keyDrag = null;
+    try {
+        timelineEl.releasePointerCapture(d.pointerId);
+    }
+    catch { }
+    if (hasMoved) {
+        suppressDragClick = true;
+        window.setTimeout(() => { suppressDragClick = false; }, 0);
+        if (!cancel && d.to !== d.from) {
+            const layer = symbol()?.children[d.layer];
+            if (layer) {
+                const preview = moveKeyframe(deep(layer), d.from, d.to, frameCount());
+                if (!preview.ok) {
+                    notify(preview.reason, true);
+                    return;
+                }
+                const ok = mutate(() => {
+                    const moved = moveKeyframe(layer, d.from, d.to, frameCount());
+                    if (!moved.ok)
+                        throw Error(moved.reason);
+                    st.selected.layer = d.layer;
+                    st.frame = d.to;
+                });
+                if (ok)
+                    notify(preview.reason);
+            }
+        }
+    }
+    else if (!cancel) {
+        st.selected.layer = d.layer;
+        st.frame = d.from;
+        renderTimeline();
+        renderInspector();
+        renderHead();
+        renderRequested = true;
+    }
+}
+timelineEl.addEventListener('pointerup', event => finishKeyDrag(event));
+timelineEl.addEventListener('pointercancel', event => finishKeyDrag(event, true));
+window.addEventListener('blur', () => {
+    if (!keyDrag)
+        return;
+    clearKeyDragVisuals();
+    keyDrag = null;
+});
 root.addEventListener('dblclick', e => { const t = e.target; const layer = t.closest('[data-layer]'); if (!layer)
     return; const c = symbol()?.children[Number(layer.dataset.layer)]; const idx = c ? activeClip()?.symbols.findIndex(s => s.name === c.name) : -1; if (idx !== undefined && idx >= 0)
     navigateSymbol(idx); });
@@ -2379,14 +2577,31 @@ function setupDockResize() {
         catch { }
         renderRequested = true;
     };
-    for (const name of Object.keys(dockDefaults)) {
-        let value = dockDefaults[name];
-        try {
-            value = Number(localStorage.getItem('tde:dock:' + name)) || value;
-        }
-        catch { }
-        apply(name, clamp(value, name === 'track' ? 125 : name === 'timeline' ? 155 : 195, name === 'timeline' ? 650 : name === 'track' ? 500 : 600));
+    // Stored widths may have been chosen on a much wider screen. Keep the canvas
+    // at least 440px wide when returning to a smaller desktop window.
+    const stored = (name) => { try {
+        return Number(localStorage.getItem('tde:dock:' + name)) || dockDefaults[name];
     }
+    catch {
+        return dockDefaults[name];
+    } };
+    const fitDesktopWidths = () => {
+        if (window.innerWidth <= 1050)
+            return;
+        const allowed = Math.max(435, window.innerWidth - 440);
+        const library = clamp(Number.parseFloat(app.style.getPropertyValue('--library-width')) || dockDefaults.library, 195, Math.min(600, allowed - 240));
+        const inspector = clamp(Number.parseFloat(app.style.getPropertyValue('--inspector-width')) || dockDefaults.inspector, 240, Math.min(600, allowed - library));
+        if (library !== Number.parseFloat(app.style.getPropertyValue('--library-width')))
+            apply('library', library);
+        if (inspector !== Number.parseFloat(app.style.getPropertyValue('--inspector-width')))
+            apply('inspector', inspector);
+    };
+    for (const name of Object.keys(dockDefaults)) {
+        const value = stored(name);
+        apply(name, clamp(value, name === 'track' ? 125 : name === 'timeline' ? 155 : name === 'inspector' ? 240 : 195, name === 'timeline' ? 650 : name === 'track' ? 500 : 600));
+    }
+    fitDesktopWidths();
+    window.addEventListener('resize', fitDesktopWidths);
     document.querySelectorAll('[data-resize]').forEach(handle => {
         handle.addEventListener('pointerdown', event => {
             if (event.button !== 0 || window.innerWidth <= 1050 && handle.dataset.resize !== 'timeline' && handle.dataset.resize !== 'track')
@@ -2394,8 +2609,11 @@ function setupDockResize() {
             const name = handle.dataset.resize;
             const start = Number.parseFloat(getComputedStyle(app).getPropertyValue({ library: '--library-width', inspector: '--inspector-width', timeline: '--timeline-height', track: '--track-width' }[name])) || dockDefaults[name];
             const x = event.clientX, y = event.clientY;
-            const max = name === 'timeline' ? Math.min(650, window.innerHeight - 235) : name === 'track' ? Math.min(520, window.innerWidth - 150) : Math.min(610, window.innerWidth * .44);
-            const min = name === 'timeline' ? 155 : name === 'track' ? 125 : 195;
+            const library = Number.parseFloat(app.style.getPropertyValue('--library-width')) || dockDefaults.library;
+            const inspector = Number.parseFloat(app.style.getPropertyValue('--inspector-width')) || dockDefaults.inspector;
+            const available = window.innerWidth - 440;
+            const max = name === 'timeline' ? Math.min(650, window.innerHeight - 235) : name === 'track' ? Math.min(520, $('.workspace').clientWidth - 125) : name === 'library' ? Math.min(600, available - inspector) : Math.min(600, available - library);
+            const min = name === 'timeline' ? 155 : name === 'track' ? 125 : name === 'inspector' ? 240 : 195;
             const move = (ev) => { const delta = name === 'timeline' ? y - ev.clientY : name === 'inspector' ? x - ev.clientX : ev.clientX - x; apply(name, Math.round(clamp(start + delta, min, max))); };
             const end = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end); document.body.classList.remove('resizing-dock'); };
             document.body.classList.add('resizing-dock');

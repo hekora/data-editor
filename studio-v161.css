@@ -229,3 +229,20 @@ body.resizing-dock,body.resizing-dock *{cursor:grabbing!important;user-select:no
 .fps-control{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;color:#c8bdce;font-size:11px}
 @media(max-width:1050px){.app{grid-template-columns:220px minmax(0,1fr)}.dock-split.library-split,.dock-split.inspector-split{display:none}.dock-split.timeline-split{display:block}}
 @media(max-width:700px){.app{grid-template-columns:minmax(0,1fr)}.timeline{height:var(--timeline-height)}.timeline .track-name{width:var(--track-width);min-width:var(--track-width)}.dock-split.library-split,.dock-split.inspector-split{display:none}}
+
+/* v1.6.1: make the three desktop docks occupy stable, explicit grid tracks.
+ * Important: this stays correct when a client has cached CSS from an older release. */
+.app > .top { grid-row:1; grid-column:1 / -1; }
+.app > .library { grid-row:2; grid-column:1; min-width:0; }
+.app > .workspace { grid-row:2; grid-column:2; min-width:0; }
+.app > .inspector { grid-row:2; grid-column:3; min-width:0; }
+.app > .dock-split { position:absolute; }
+.workspace > .timeline-split,.timeline > .track-split { position:absolute; }
+@media(max-width:1050px){
+  .app > .workspace { grid-row:2; grid-column:2; }
+  .app > .inspector { grid-row:auto; grid-column:auto; }
+}
+@media(max-width:700px){
+  .app > .library { grid-row:auto; grid-column:auto; }
+  .app > .workspace { grid-row:2; grid-column:1; }
+}
